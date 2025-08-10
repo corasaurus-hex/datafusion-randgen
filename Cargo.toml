@@ -1,0 +1,15 @@
+[package]
+name = "datafusion-randgen"
+version = "0.1.0"
+edition = "2024"
+description = "A random data generator for Apache DataFusion"
+readme = "README.md"
+license = "MIT"
+keywords = ["datafusion", "random", "data", "generator"]
+repository = "https://github.com/corasaurus-hex/datafusion-randgen"
+rust-version = "1.89.0"
+
+[dependencies]
+datafusion = { version = "49", default-features = false }
+rand = "0.9.2"
+rand_distr = "0.5.1"
