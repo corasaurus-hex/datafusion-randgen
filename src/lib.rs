@@ -1,14 +1,10 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+use datafusion::logical_expr::ScalarUDF;
+use datafusion::prelude::SessionContext;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+use crate::randgen::int64_uniform::Int64Uniform;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+pub mod randgen;
+
+pub fn add_udfs(ctx: &mut SessionContext) {
+    ctx.register_udf(ScalarUDF::from(Int64Uniform::new()));
 }
