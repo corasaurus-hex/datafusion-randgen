@@ -130,44 +130,18 @@ fn sample_uniform_min_array_max_array(
 #[cfg(test)]
 mod tests {
     use datafusion::{
-        arrow::{
-            array::{ArrowPrimitiveType, PrimitiveArray},
-            datatypes::{DataType, Int64Type},
-        },
+        arrow::datatypes::{DataType, Int64Type},
         logical_expr::ScalarUDF,
-        prelude::SessionContext,
     };
 
-    use super::*;
+    use crate::randgen::test_helpers::querying::query_to_values;
 
-    async fn query_to_values<T>(query: &str, data_type: DataType) -> Vec<T::Native>
-    where
-        T: ArrowPrimitiveType,
-    {
-        let ctx = SessionContext::new();
-        ctx.register_udf(ScalarUDF::from(Int64Uniform::new()));
-        let df = ctx.sql(query).await.unwrap();
-        let batches = df.collect().await.unwrap();
-        let values = batches
-            .into_iter()
-            .flat_map(|batch| {
-                let col = batch.column(0);
-                assert_eq!(col.data_type(), &data_type);
-                col.as_any()
-                    .downcast_ref::<PrimitiveArray<T>>()
-                    .unwrap()
-                    .iter()
-                    .map(|v| v.unwrap())
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        assert!(values.len() > 0);
-        values
-    }
+    use super::*;
 
     #[tokio::test]
     async fn int64_uniform_min_const_max_const() {
         for value in query_to_values::<Int64Type>(
+            ScalarUDF::from(Int64Uniform::new()),
             "SELECT randgen_int64_uniform(1, 10) as x from generate_series(1, 100)",
             DataType::Int64,
         )
@@ -181,6 +155,7 @@ mod tests {
     #[tokio::test]
     async fn int64_uniform_min_array_max_const() {
         for value in query_to_values::<Int64Type>(
+            ScalarUDF::from(Int64Uniform::new()),
             "SELECT randgen_int64_uniform(y, 20) as x from (select randgen_int64_uniform(1, 10) as y from generate_series(1, 100))",
             DataType::Int64,
         )
@@ -194,6 +169,7 @@ mod tests {
     #[tokio::test]
     async fn int64_uniform_min_const_max_array() {
         for value in query_to_values::<Int64Type>(
+            ScalarUDF::from(Int64Uniform::new()),
             "SELECT randgen_int64_uniform(1, y) as x from (select randgen_int64_uniform(11, 20) as y from generate_series(1, 100))",
             DataType::Int64,
         )
@@ -207,6 +183,7 @@ mod tests {
     #[tokio::test]
     async fn int64_uniform_min_array_max_array() {
         for value in query_to_values::<Int64Type>(
+            ScalarUDF::from(Int64Uniform::new()),
             "SELECT randgen_int64_uniform(x, y) as x from (select randgen_int64_uniform(1, 10) as x, randgen_int64_uniform(11, 20) as y from generate_series(1, 100))",
             DataType::Int64,
         )
