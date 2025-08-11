@@ -31,6 +31,12 @@ impl Int64Uniform {
     }
 }
 
+impl Default for Int64Uniform {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScalarUDFImpl for Int64Uniform {
     fn as_any(&self) -> &dyn Any {
         self
