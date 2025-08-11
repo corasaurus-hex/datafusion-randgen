@@ -8,7 +8,7 @@ pub(crate) mod querying {
         udf: ScalarUDF,
         query: &str,
         data_type: DataType,
-    ) -> Vec<T::Native>
+    ) -> Vec<Option<T::Native>>
     where
         T: ArrowPrimitiveType,
     {
@@ -25,7 +25,6 @@ pub(crate) mod querying {
                     .downcast_ref::<PrimitiveArray<T>>()
                     .unwrap()
                     .iter()
-                    .map(|v| v.unwrap())
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
