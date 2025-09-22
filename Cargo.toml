@@ -10,7 +10,7 @@ repository = "https://github.com/corasaurus-hex/datafusion-randgen"
 rust-version = "1.89.0"
 
 [dependencies]
-datafusion = { version = "49", default-features = false }
+datafusion = { version = "50", default-features = false }
 rand = "0.9.2"
 rand_distr = "0.5.1"
 
