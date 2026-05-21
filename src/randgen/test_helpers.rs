@@ -28,7 +28,7 @@ pub(crate) mod querying {
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        assert!(values.len() > 0);
+        assert!(!values.is_empty());
         values
     }
 }
