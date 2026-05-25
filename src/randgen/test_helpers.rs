@@ -15,6 +15,25 @@ pub(crate) mod querying {
         df.collect().await
     }
 
+    pub(crate) async fn query_to_string_values(udf: ScalarUDF, query: &str) -> Vec<Option<String>> {
+        let batches = query_result(udf, query).await.unwrap();
+        let values = batches
+            .into_iter()
+            .flat_map(|batch| {
+                let col = batch.column(0);
+                assert_eq!(col.data_type(), &DataType::Utf8);
+                col.as_any()
+                    .downcast_ref::<datafusion::arrow::array::StringArray>()
+                    .unwrap()
+                    .iter()
+                    .map(|value| value.map(str::to_owned))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert!(!values.is_empty());
+        values
+    }
+
     pub(crate) async fn query_to_bool_values(udf: ScalarUDF, query: &str) -> Vec<Option<bool>> {
         let batches = query_result(udf, query).await.unwrap();
         let values = batches
