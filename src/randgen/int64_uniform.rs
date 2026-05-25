@@ -14,7 +14,7 @@ use rand::Rng;
 use rand_distr::Uniform;
 use std::sync::{Arc, LazyLock};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Int64Uniform {
     signature: &'static Signature,
 }
