@@ -19,8 +19,18 @@ jobs:
       - name: Install the Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
       - name: Run tests
-        run: cargo test
+        run: just test
 
   fmt:
     name: Rustfmt
@@ -31,8 +41,13 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
       - name: Enforce formatting
-        run: cargo fmt --check
+        run: just fmt-check
 
   clippy:
     name: Clippy
@@ -43,8 +58,13 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
       - name: Linting
-        run: cargo clippy -- -D warnings
+        run: just lint
 
   coverage:
     name: Code coverage
