@@ -1,17 +1,13 @@
 use std::any::Any;
-use std::cell::RefCell;
 
 use datafusion::arrow::array::{Array, AsArray, Int64Array};
-use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Int64Type};
-use datafusion::common::internal_err;
+use datafusion::common::{exec_err, internal_err};
 use datafusion::error::Result;
 use datafusion::logical_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
-use datafusion::scalar::ScalarValue;
 use rand::Rng;
-use rand_distr::Uniform;
 use std::sync::{Arc, LazyLock};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -54,102 +50,46 @@ impl ScalarUDFImpl for Int64Uniform {
         Ok(DataType::Int64)
     }
 
-    fn invoke_with_args(
-        &self,
-        args: ScalarFunctionArgs,
-    ) -> datafusion::error::Result<ColumnarValue> {
-        let ScalarFunctionArgs { mut args, .. } = args;
-        let max = args.pop().unwrap();
-        let min = args.pop().unwrap();
+    fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
+        let ScalarFunctionArgs {
+            args, number_rows, ..
+        } = args;
+        let [min, max]: [ColumnarValue; 2] = match args.try_into() {
+            Ok(args) => args,
+            Err(_) => return internal_err!("{} expects exactly two arguments", self.name()),
+        };
 
-        assert_eq!(max.data_type(), DataType::Int64);
-        assert_eq!(min.data_type(), DataType::Int64);
-
-        match (max, min) {
-            (
-                ColumnarValue::Scalar(ScalarValue::Int64(max)),
-                ColumnarValue::Scalar(ScalarValue::Int64(min)),
-            ) => {
-                let results = sample_uniform_min_const_max_const(min, max);
-                Ok(ColumnarValue::Scalar(ScalarValue::from(results)))
-            }
-            (ColumnarValue::Array(base_array), ColumnarValue::Scalar(ScalarValue::Int64(max))) => {
-                let results = sample_uniform_min_array_max_const(base_array, max);
-                Ok(ColumnarValue::Array(results))
-            }
-
-            (ColumnarValue::Scalar(ScalarValue::Int64(min)), ColumnarValue::Array(max_array)) => {
-                let results = sample_uniform_min_const_max_array(min, max_array);
-                Ok(ColumnarValue::Array(results))
-            }
-
-            (ColumnarValue::Array(min_array), ColumnarValue::Array(max_array)) => {
-                let results = sample_uniform_min_array_max_array(min_array, max_array);
-                Ok(ColumnarValue::Array(results))
-            }
-            _ => internal_err!("Unsupported argument types"),
+        if min.data_type() != DataType::Int64 || max.data_type() != DataType::Int64 {
+            return internal_err!("{} expects Int64 arguments", self.name());
         }
-    }
-}
 
-fn sample_uniform_min_const_max_const(min: Option<i64>, max: Option<i64>) -> Option<i64> {
-    match (min, max) {
-        (Some(min), Some(max)) => {
-            let mut rng = rand::rng();
-            let uniform = Uniform::new_inclusive(min, max).unwrap();
-            Some(rng.sample(uniform))
+        let min_array = min.into_array_of_size(number_rows)?;
+        let max_array = max.into_array_of_size(number_rows)?;
+        let min_values = min_array.as_primitive::<Int64Type>();
+        let max_values = max_array.as_primitive::<Int64Type>();
+
+        let mut rng = rand::rng();
+        let mut values = Vec::with_capacity(number_rows);
+        for row in 0..number_rows {
+            if min_values.is_null(row) || max_values.is_null(row) {
+                values.push(None);
+                continue;
+            }
+
+            let min = min_values.value(row);
+            let max = max_values.value(row);
+            if min > max {
+                return exec_err!(
+                    "{} requires min <= max, got min {min} and max {max}",
+                    self.name()
+                );
+            }
+
+            values.push(Some(rng.random_range(min..=max)));
         }
-        _ => None,
-    }
-}
 
-fn sample_uniform_min_array_max_const(
-    min_array: Arc<dyn Array>,
-    max: Option<i64>,
-) -> Arc<Int64Array> {
-    if max.is_none() {
-        return Arc::new(Int64Array::new_null(min_array.len()));
+        Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))))
     }
-    let max = max.unwrap();
-    let rng = RefCell::new(rand::rng());
-    let min_values = min_array.as_primitive::<Int64Type>();
-    let results: Int64Array = compute::unary(min_values, |min| {
-        let uniform = Uniform::new_inclusive(min, max).unwrap();
-        rng.borrow_mut().sample(uniform)
-    });
-    Arc::new(results)
-}
-
-fn sample_uniform_min_const_max_array(
-    min: Option<i64>,
-    max_array: Arc<dyn Array>,
-) -> Arc<Int64Array> {
-    if min.is_none() {
-        return Arc::new(Int64Array::new_null(max_array.len()));
-    }
-    let min = min.unwrap();
-    let rng = RefCell::new(rand::rng());
-    let max_values = max_array.as_primitive::<Int64Type>();
-    let results: Int64Array = compute::unary(max_values, |max| {
-        let uniform = Uniform::new_inclusive(min, max).unwrap();
-        rng.borrow_mut().sample(uniform)
-    });
-    Arc::new(results)
-}
-
-fn sample_uniform_min_array_max_array(
-    min_array: Arc<dyn Array>,
-    max_array: Arc<dyn Array>,
-) -> Arc<Int64Array> {
-    let rng = RefCell::new(rand::rng());
-    let min_values = min_array.as_primitive::<Int64Type>();
-    let max_values = max_array.as_primitive::<Int64Type>();
-    let results: Int64Array = compute::try_binary(min_values, max_values, |min, max| {
-        let uniform = Uniform::new_inclusive(min, max).unwrap();
-        Ok(rng.borrow_mut().sample(uniform))
-    })
-    .unwrap();
-    Arc::new(results)
 }
 
 #[cfg(test)]
@@ -175,6 +115,39 @@ mod tests {
             assert!(value.unwrap() >= 1);
             assert!(value.unwrap() <= 10);
         }
+    }
+
+    #[tokio::test]
+    async fn int64_uniform_min_const_max_const_varies_by_row() {
+        let values = query_to_values::<Int64Type>(
+            ScalarUDF::from(Int64Uniform::new()),
+            "SELECT randgen_int64_uniform(1, 2) as x from generate_series(1, 1000)",
+            DataType::Int64,
+        )
+        .await;
+        assert!(values.contains(&Some(1)));
+        assert!(values.contains(&Some(2)));
+    }
+
+    #[tokio::test]
+    async fn int64_uniform_min_equals_max_is_deterministic() {
+        let values = query_to_values::<Int64Type>(
+            ScalarUDF::from(Int64Uniform::new()),
+            "SELECT randgen_int64_uniform(7, 7) as x from generate_series(1, 100)",
+            DataType::Int64,
+        )
+        .await;
+        assert!(values.iter().all(|value| *value == Some(7)));
+    }
+
+    #[tokio::test]
+    async fn int64_uniform_invalid_range_errors() {
+        let result = crate::randgen::test_helpers::querying::query_result(
+            ScalarUDF::from(Int64Uniform::new()),
+            "SELECT randgen_int64_uniform(10, 1) as x from generate_series(1, 10)",
+        )
+        .await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
