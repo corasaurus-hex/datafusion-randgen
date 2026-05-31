@@ -6,9 +6,11 @@ use arrow_array::types::Date32Type;
 use arrow_array::{Array, Date32Array};
 use arrow_schema::DataType;
 use datafusion_common::Result;
-use datafusion_common::{exec_err, internal_err};
+use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
+
+use crate::randgen::utils::two_array_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Date32 {
@@ -57,17 +59,13 @@ impl ScalarUDFImpl for Date32 {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [min, max]: [ColumnarValue; 2] = match args.try_into() {
-            Ok(args) => args,
-            Err(_) => return internal_err!("{} expects exactly two arguments", self.name()),
-        };
-
-        if min.data_type() != DataType::Date32 || max.data_type() != DataType::Date32 {
-            return internal_err!("{} expects Date32 arguments", self.name());
-        }
-
-        let min_array = min.into_array_of_size(number_rows)?;
-        let max_array = max.into_array_of_size(number_rows)?;
+        let (min_array, max_array) = two_array_args(
+            args,
+            (DataType::Date32, "Date32 arguments"),
+            (DataType::Date32, "Date32 arguments"),
+            number_rows,
+            self.name(),
+        )?;
         let min_values = min_array.as_primitive::<Date32Type>();
         let max_values = max_array.as_primitive::<Date32Type>();
 

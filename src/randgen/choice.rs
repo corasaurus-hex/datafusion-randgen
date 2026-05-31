@@ -12,6 +12,8 @@ use datafusion_expr::{
 };
 use rand::Rng;
 
+use crate::randgen::utils::exact_args;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Choice {
     signature: &'static Signature,
@@ -111,10 +113,7 @@ impl ScalarUDFImpl for Choice {
             return_field,
             ..
         } = args;
-        let [choices]: [ColumnarValue; 1] = match args.try_into() {
-            Ok(args) => args,
-            Err(_) => return internal_err!("{} expects exactly one argument", self.name()),
-        };
+        let [choices] = exact_args(args, self.name())?;
 
         if number_rows == 0 {
             return Ok(ColumnarValue::Array(new_empty_array(

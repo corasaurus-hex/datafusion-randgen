@@ -6,12 +6,14 @@ use arrow_array::types::TimestampMillisecondType;
 use arrow_array::{Array, TimestampMillisecondArray};
 use arrow_schema::{DataType, TimeUnit};
 use datafusion_common::Result;
-use datafusion_common::{exec_err, internal_err, plan_err};
+use datafusion_common::{exec_err, plan_err};
 use datafusion_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TIMEZONE_WILDCARD, TypeSignature,
     Volatility,
 };
 use rand::Rng;
+
+use crate::randgen::utils::exact_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TimestampMillisecond {
@@ -99,10 +101,7 @@ impl ScalarUDFImpl for TimestampMillisecond {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [min, max]: [ColumnarValue; 2] = match args.try_into() {
-            Ok(args) => args,
-            Err(_) => return internal_err!("{} expects exactly two arguments", self.name()),
-        };
+        let [min, max] = exact_args(args, self.name())?;
 
         let output_type =
             timestamp_millisecond_type(&min.data_type(), &max.data_type(), self.name())?;

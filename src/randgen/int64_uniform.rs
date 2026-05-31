@@ -5,10 +5,12 @@ use arrow_array::types::Int64Type;
 use arrow_array::{Array, Int64Array};
 use arrow_schema::DataType;
 use datafusion_common::Result;
-use datafusion_common::{exec_err, internal_err};
+use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 use std::sync::{Arc, LazyLock};
+
+use crate::randgen::utils::two_array_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Int64Uniform {
@@ -54,17 +56,13 @@ impl ScalarUDFImpl for Int64Uniform {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [min, max]: [ColumnarValue; 2] = match args.try_into() {
-            Ok(args) => args,
-            Err(_) => return internal_err!("{} expects exactly two arguments", self.name()),
-        };
-
-        if min.data_type() != DataType::Int64 || max.data_type() != DataType::Int64 {
-            return internal_err!("{} expects Int64 arguments", self.name());
-        }
-
-        let min_array = min.into_array_of_size(number_rows)?;
-        let max_array = max.into_array_of_size(number_rows)?;
+        let (min_array, max_array) = two_array_args(
+            args,
+            (DataType::Int64, "Int64 arguments"),
+            (DataType::Int64, "Int64 arguments"),
+            number_rows,
+            self.name(),
+        )?;
         let min_values = min_array.as_primitive::<Int64Type>();
         let max_values = max_array.as_primitive::<Int64Type>();
 

@@ -7,10 +7,12 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::Int64Type;
 use arrow_array::{Array, builder::StringBuilder};
 use arrow_schema::DataType;
+use datafusion_common::exec_err;
 use datafusion_common::{DataFusionError, Result};
-use datafusion_common::{exec_err, internal_err};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
+
+use crate::randgen::utils::three_array_args;
 
 const MAX_UTF8_ARRAY_BYTES: i64 = i32::MAX as i64;
 const ALPHABET_CACHE_CAPACITY: usize = 1024;
@@ -156,21 +158,14 @@ impl ScalarUDFImpl for Utf8 {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [characters, min_length, max_length]: [ColumnarValue; 3] = match args.try_into() {
-            Ok(args) => args,
-            Err(_) => return internal_err!("{} expects exactly three arguments", self.name()),
-        };
-
-        if characters.data_type() != DataType::Utf8
-            || min_length.data_type() != DataType::Int64
-            || max_length.data_type() != DataType::Int64
-        {
-            return internal_err!("{} expects Utf8, Int64, Int64 arguments", self.name());
-        }
-
-        let characters_array = characters.into_array_of_size(number_rows)?;
-        let min_length_array = min_length.into_array_of_size(number_rows)?;
-        let max_length_array = max_length.into_array_of_size(number_rows)?;
+        let (characters_array, min_length_array, max_length_array) = three_array_args(
+            args,
+            (DataType::Utf8, "Utf8, Int64, Int64 arguments"),
+            (DataType::Int64, "Utf8, Int64, Int64 arguments"),
+            (DataType::Int64, "Utf8, Int64, Int64 arguments"),
+            number_rows,
+            self.name(),
+        )?;
         let characters_values = characters_array.as_string::<i32>();
         let min_length_values = min_length_array.as_primitive::<Int64Type>();
         let max_length_values = max_length_array.as_primitive::<Int64Type>();

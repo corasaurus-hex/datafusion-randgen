@@ -1,4 +1,3 @@
-#[cfg(test)]
 pub(crate) mod querying {
     use arrow_array::types::ArrowPrimitiveType;
     use arrow_array::{PrimitiveArray, RecordBatch};

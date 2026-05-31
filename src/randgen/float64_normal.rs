@@ -6,11 +6,13 @@ use arrow_array::types::Float64Type;
 use arrow_array::{Array, Float64Array};
 use arrow_schema::DataType;
 use datafusion_common::Result;
-use datafusion_common::{exec_err, internal_err};
+use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 use rand_distr::Normal;
 use std::sync::Arc;
+
+use crate::randgen::utils::two_array_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Float64Normal {
@@ -55,17 +57,13 @@ impl ScalarUDFImpl for Float64Normal {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [mean, stddev]: [ColumnarValue; 2] = match args.try_into() {
-            Ok(args) => args,
-            Err(_) => return internal_err!("{} expects exactly two arguments", self.name()),
-        };
-
-        if mean.data_type() != DataType::Float64 || stddev.data_type() != DataType::Float64 {
-            return internal_err!("{} expects Float64 arguments", self.name());
-        }
-
-        let mean_array = mean.into_array_of_size(number_rows)?;
-        let stddev_array = stddev.into_array_of_size(number_rows)?;
+        let (mean_array, stddev_array) = two_array_args(
+            args,
+            (DataType::Float64, "Float64 arguments"),
+            (DataType::Float64, "Float64 arguments"),
+            number_rows,
+            self.name(),
+        )?;
         let mean_values = mean_array.as_primitive::<Float64Type>();
         let stddev_values = stddev_array.as_primitive::<Float64Type>();
 

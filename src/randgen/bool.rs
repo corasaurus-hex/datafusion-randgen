@@ -6,10 +6,12 @@ use arrow_array::types::Float64Type;
 use arrow_array::{Array, BooleanArray};
 use arrow_schema::DataType;
 use datafusion_common::Result;
-use datafusion_common::{exec_err, internal_err};
+use datafusion_common::exec_err;
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 use std::sync::Arc;
+
+use crate::randgen::utils::one_array_arg;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Bool {
@@ -54,16 +56,12 @@ impl ScalarUDFImpl for Bool {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [probability]: [ColumnarValue; 1] = match args.try_into() {
-            Ok(args) => args,
-            Err(_) => return internal_err!("{} expects exactly one argument", self.name()),
-        };
-
-        if probability.data_type() != DataType::Float64 {
-            return internal_err!("{} expects a Float64 probability", self.name());
-        }
-
-        let probability_array = probability.into_array_of_size(number_rows)?;
+        let probability_array = one_array_arg(
+            args,
+            (DataType::Float64, "a Float64 probability"),
+            number_rows,
+            self.name(),
+        )?;
         let probabilities = probability_array.as_primitive::<Float64Type>();
         let mut rng = rand::rng();
         let mut values = Vec::with_capacity(number_rows);
