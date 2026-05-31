@@ -87,6 +87,12 @@ impl ScalarUDFImpl for Float64Uniform {
                     self.name()
                 );
             }
+            if !(max - min).is_finite() {
+                return exec_err!(
+                    "{} requires finite distance between bounds, got min {min} and max {max}",
+                    self.name()
+                );
+            }
 
             let value = if min == max {
                 min
@@ -142,6 +148,16 @@ mod tests {
         let result = query_result(
             ScalarUDF::from(Float64Uniform::new()),
             "SELECT randgen_float64_uniform(10.0, 1.0) FROM generate_series(1, 10)",
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn float64_uniform_overflowing_span_errors() {
+        let result = query_result(
+            ScalarUDF::from(Float64Uniform::new()),
+            "SELECT randgen_float64_uniform(-1.7976931348623157e308, 1.7976931348623157e308) FROM generate_series(1, 10)",
         )
         .await;
         assert!(result.is_err());
