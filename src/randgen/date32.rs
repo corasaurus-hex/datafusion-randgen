@@ -1,14 +1,14 @@
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
-use datafusion::arrow::array::{Array, AsArray, Date32Array};
-use datafusion::arrow::datatypes::{DataType, Date32Type};
-use datafusion::common::{exec_err, internal_err};
-use datafusion::error::Result;
-use datafusion::logical_expr::{
-    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
-};
-use rand::RngExt;
+use arrow_array::cast::AsArray;
+use arrow_array::types::Date32Type;
+use arrow_array::{Array, Date32Array};
+use arrow_schema::DataType;
+use datafusion_common::Result;
+use datafusion_common::{exec_err, internal_err};
+use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use rand::Rng;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Date32 {
@@ -97,7 +97,8 @@ impl ScalarUDFImpl for Date32 {
 
 #[cfg(test)]
 mod tests {
-    use datafusion::{arrow::datatypes::DataType, logical_expr::ScalarUDF};
+    use arrow_schema::DataType;
+    use datafusion_expr::ScalarUDF;
 
     use crate::randgen::test_helpers::querying::{query_result, query_to_values};
 

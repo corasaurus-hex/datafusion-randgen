@@ -1,14 +1,16 @@
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
-use datafusion::arrow::array::{Array, AsArray, new_empty_array};
-use datafusion::arrow::datatypes::{DataType, Field};
-use datafusion::common::{ScalarValue, exec_err, internal_err, plan_err};
-use datafusion::error::Result;
-use datafusion::logical_expr::{
+use arrow_array::builder::StringBuilder;
+use arrow_array::cast::AsArray;
+use arrow_array::{Array, ListArray, new_empty_array, new_null_array};
+use arrow_schema::{DataType, Field};
+use datafusion_common::Result;
+use datafusion_common::{ScalarValue, exec_err, internal_err, plan_err};
+use datafusion_expr::{
     ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
-use rand::RngExt;
+use rand::Rng;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Choice {
@@ -17,6 +19,41 @@ pub struct Choice {
 
 static CHOICE_SIGNATURE: LazyLock<Signature> =
     LazyLock::new(|| Signature::any(1, Volatility::Volatile));
+
+fn choose_from_scalar_utf8_list(
+    choices: &ListArray,
+    number_rows: usize,
+    name: &str,
+) -> Result<ColumnarValue> {
+    if choices.len() != 1 {
+        return internal_err!("{name} scalar List value must contain exactly one row");
+    }
+    if choices.is_null(0) {
+        return Ok(ColumnarValue::Array(new_null_array(
+            &DataType::Utf8,
+            number_rows,
+        )));
+    }
+
+    let row_choices = choices.value(0);
+    if row_choices.is_empty() {
+        return exec_err!("{name} requires at least one choice");
+    }
+
+    let row_choices = row_choices.as_string::<i32>();
+    let mut rng = rand::rng();
+    let mut builder = StringBuilder::with_capacity(number_rows, 0);
+    for _ in 0..number_rows {
+        let choice_index = rng.random_range(0..row_choices.len());
+        if row_choices.is_null(choice_index) {
+            builder.append_null();
+        } else {
+            builder.append_value(row_choices.value(choice_index));
+        }
+    }
+
+    Ok(ColumnarValue::Array(Arc::new(builder.finish())))
+}
 
 impl Choice {
     pub fn new() -> Self {
@@ -79,17 +116,32 @@ impl ScalarUDFImpl for Choice {
             Err(_) => return internal_err!("{} expects exactly one argument", self.name()),
         };
 
+        if number_rows == 0 {
+            return Ok(ColumnarValue::Array(new_empty_array(
+                return_field.data_type(),
+            )));
+        }
+        if let ColumnarValue::Scalar(ScalarValue::List(list)) = &choices {
+            if matches!(return_field.data_type(), DataType::Utf8) {
+                let DataType::List(item_field) = list.data_type() else {
+                    return internal_err!("{} expects a List argument", self.name());
+                };
+                if item_field.data_type() != return_field.data_type() {
+                    return internal_err!(
+                        "{} return field does not match list item type",
+                        self.name()
+                    );
+                }
+                return choose_from_scalar_utf8_list(list, number_rows, self.name());
+            }
+        }
+
         let choices = choices.into_array_of_size(number_rows)?;
         let DataType::List(item_field) = choices.data_type() else {
             return internal_err!("{} expects a List argument", self.name());
         };
         if item_field.data_type() != return_field.data_type() {
             return internal_err!("{} return field does not match list item type", self.name());
-        }
-        if number_rows == 0 {
-            return Ok(ColumnarValue::Array(new_empty_array(
-                return_field.data_type(),
-            )));
         }
 
         let choices = choices.as_list::<i32>();
@@ -121,15 +173,10 @@ impl ScalarUDFImpl for Choice {
 mod tests {
     use std::sync::Arc;
 
-    use datafusion::{
-        arrow::{
-            datatypes::{DataType, Field, Schema},
-            record_batch::RecordBatch,
-        },
-        datasource::MemTable,
-        logical_expr::ScalarUDF,
-        prelude::SessionContext,
-    };
+    use arrow_array::RecordBatch;
+    use arrow_schema::{DataType, Field, Schema};
+    use datafusion::{datasource::MemTable, prelude::SessionContext};
+    use datafusion_expr::ScalarUDF;
 
     use crate::randgen::test_helpers::querying::{query_result, query_to_string_values};
 

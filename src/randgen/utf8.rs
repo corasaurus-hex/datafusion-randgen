@@ -1,14 +1,113 @@
 use std::any::Any;
-use std::sync::{Arc, LazyLock};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Write;
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
-use datafusion::arrow::array::{Array, AsArray, StringArray};
-use datafusion::arrow::datatypes::{DataType, Int64Type};
-use datafusion::common::{exec_err, internal_err};
-use datafusion::error::Result;
-use datafusion::logical_expr::{
-    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
-};
-use rand::RngExt;
+use arrow_array::cast::AsArray;
+use arrow_array::types::Int64Type;
+use arrow_array::{Array, builder::StringBuilder};
+use arrow_schema::DataType;
+use datafusion_common::{DataFusionError, Result};
+use datafusion_common::{exec_err, internal_err};
+use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use rand::Rng;
+
+const MAX_UTF8_ARRAY_BYTES: i64 = i32::MAX as i64;
+const ALPHABET_CACHE_CAPACITY: usize = 1024;
+
+static ALPHABET_CACHE: LazyLock<Mutex<AlphabetCache>> =
+    LazyLock::new(|| Mutex::new(AlphabetCache::default()));
+
+#[derive(Debug)]
+struct Alphabet {
+    characters: Vec<char>,
+    max_character_bytes: usize,
+}
+
+#[derive(Debug)]
+struct RowSpec {
+    alphabet: Arc<Alphabet>,
+    min_length: i64,
+    max_length: i64,
+}
+
+#[derive(Debug, Default)]
+struct AlphabetCache {
+    entries: HashMap<String, Arc<Alphabet>>,
+    order: VecDeque<String>,
+}
+
+impl AlphabetCache {
+    fn get(&mut self, characters: &str) -> Option<Arc<Alphabet>> {
+        let alphabet = self.entries.get(characters).cloned()?;
+        self.order
+            .retain(|cached_characters| cached_characters != characters);
+        self.order.push_back(characters.to_owned());
+        Some(alphabet)
+    }
+
+    fn insert(&mut self, characters: String, alphabet: Arc<Alphabet>) -> Arc<Alphabet> {
+        self.order
+            .retain(|cached_characters| cached_characters != &characters);
+        self.entries
+            .insert(characters.clone(), Arc::clone(&alphabet));
+        self.order.push_back(characters);
+
+        while self.entries.len() > ALPHABET_CACHE_CAPACITY {
+            let Some(stale_characters) = self.order.pop_front() else {
+                break;
+            };
+            self.entries.remove(&stale_characters);
+        }
+
+        alphabet
+    }
+}
+
+fn alphabet_cache(name: &str) -> Result<MutexGuard<'static, AlphabetCache>> {
+    ALPHABET_CACHE.lock().map_err(|_| {
+        DataFusionError::Execution(format!("{name} failed to lock the alphabet cache"))
+    })
+}
+
+fn cached_alphabet(characters: &str, name: &str) -> Result<Arc<Alphabet>> {
+    if let Some(alphabet) = alphabet_cache(name)?.get(characters) {
+        return Ok(alphabet);
+    }
+
+    let alphabet = parse_alphabet(characters, name)?;
+    let mut cache = alphabet_cache(name)?;
+    if let Some(alphabet) = cache.get(characters) {
+        return Ok(alphabet);
+    }
+
+    Ok(cache.insert(characters.to_owned(), alphabet))
+}
+
+fn parse_alphabet(characters: &str, name: &str) -> Result<Arc<Alphabet>> {
+    let mut seen = HashSet::new();
+    let mut alphabet = Vec::new();
+    for character in characters.chars() {
+        if seen.insert(character) {
+            alphabet.push(character);
+        }
+    }
+
+    if alphabet.is_empty() {
+        return exec_err!("{name} requires at least one allowed character");
+    }
+
+    let max_character_bytes = alphabet
+        .iter()
+        .map(|character| character.len_utf8())
+        .max()
+        .unwrap();
+
+    Ok(Arc::new(Alphabet {
+        characters: alphabet,
+        max_character_bytes,
+    }))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Utf8 {
@@ -76,22 +175,27 @@ impl ScalarUDFImpl for Utf8 {
         let min_length_values = min_length_array.as_primitive::<Int64Type>();
         let max_length_values = max_length_array.as_primitive::<Int64Type>();
 
-        let mut rng = rand::rng();
-        let mut values = Vec::with_capacity(number_rows);
+        let mut total_max_bytes = 0_i64;
+        let mut local_alphabets = HashMap::new();
+        let mut row_specs = Vec::with_capacity(number_rows);
         for row in 0..number_rows {
             if characters_values.is_null(row)
                 || min_length_values.is_null(row)
                 || max_length_values.is_null(row)
             {
-                values.push(None);
+                row_specs.push(None);
                 continue;
             }
 
-            let alphabet = characters_values.value(row);
-            let alphabet = alphabet.chars().collect::<Vec<_>>();
-            if alphabet.is_empty() {
-                return exec_err!("{} requires at least one allowed character", self.name());
-            }
+            let characters = characters_values.value(row);
+            let alphabet = match local_alphabets.get(characters) {
+                Some(alphabet) => Arc::clone(alphabet),
+                None => {
+                    let alphabet = cached_alphabet(characters, self.name())?;
+                    local_alphabets.insert(characters, Arc::clone(&alphabet));
+                    alphabet
+                }
+            };
 
             let min_length = min_length_values.value(row);
             let max_length = max_length_values.value(row);
@@ -99,22 +203,63 @@ impl ScalarUDFImpl for Utf8 {
                 return exec_err!("{} requires 0 <= min_length <= max_length", self.name());
             }
 
-            let length = rng.random_range(min_length..=max_length) as usize;
-            let mut value = String::new();
-            for _ in 0..length {
-                let index = rng.random_range(0..alphabet.len());
-                value.push(alphabet[index]);
+            let Some(row_max_bytes) = max_length.checked_mul(alphabet.max_character_bytes as i64)
+            else {
+                return exec_err!(
+                    "{} generated Utf8 output exceeds the Arrow Utf8 byte limit of {MAX_UTF8_ARRAY_BYTES}",
+                    self.name()
+                );
+            };
+            let Some(new_total_max_bytes) = total_max_bytes.checked_add(row_max_bytes) else {
+                return exec_err!(
+                    "{} generated Utf8 output exceeds the Arrow Utf8 byte limit of {MAX_UTF8_ARRAY_BYTES}",
+                    self.name()
+                );
+            };
+            if new_total_max_bytes > MAX_UTF8_ARRAY_BYTES {
+                return exec_err!(
+                    "{} generated Utf8 output exceeds the Arrow Utf8 byte limit of {MAX_UTF8_ARRAY_BYTES}",
+                    self.name()
+                );
             }
-            values.push(Some(value));
+            total_max_bytes = new_total_max_bytes;
+            row_specs.push(Some(RowSpec {
+                alphabet,
+                min_length,
+                max_length,
+            }));
         }
 
-        Ok(ColumnarValue::Array(Arc::new(StringArray::from(values))))
+        let mut rng = rand::rng();
+        let mut builder = StringBuilder::with_capacity(number_rows, 0);
+        for row_spec in row_specs {
+            let Some(row_spec) = row_spec else {
+                builder.append_null();
+                continue;
+            };
+
+            let length = rng.random_range(row_spec.min_length..=row_spec.max_length) as usize;
+            for _ in 0..length {
+                let index = rng.random_range(0..row_spec.alphabet.characters.len());
+                builder
+                    .write_char(row_spec.alphabet.characters[index])
+                    .map_err(|_| {
+                        DataFusionError::Execution(format!(
+                            "{} failed to write generated output",
+                            self.name()
+                        ))
+                    })?;
+            }
+            builder.append_value("");
+        }
+
+        Ok(ColumnarValue::Array(Arc::new(builder.finish())))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use datafusion::logical_expr::ScalarUDF;
+    use datafusion_expr::ScalarUDF;
 
     use crate::randgen::test_helpers::querying::{query_result, query_to_string_values};
 
@@ -159,6 +304,32 @@ mod tests {
         let result = query_result(
             ScalarUDF::from(Utf8::new()),
             "SELECT randgen_utf8('', 1, 2) FROM generate_series(1, 10)",
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn utf8_character_set_is_deduplicated() {
+        let alphabet = parse_alphabet("AAB😀😀C", "randgen_utf8").unwrap();
+        assert_eq!(alphabet.characters, vec!['A', 'B', '😀', 'C']);
+    }
+
+    #[tokio::test]
+    async fn utf8_rejects_output_larger_than_arrow_utf8_offsets() {
+        let result = query_result(
+            ScalarUDF::from(Utf8::new()),
+            "SELECT randgen_utf8('A', 2147483648, 2147483648) FROM generate_series(1, 1)",
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn utf8_rejects_multibyte_output_larger_than_arrow_utf8_offsets() {
+        let result = query_result(
+            ScalarUDF::from(Utf8::new()),
+            "SELECT randgen_utf8('😀', 536870912, 536870912) FROM generate_series(1, 1)",
         )
         .await;
         assert!(result.is_err());

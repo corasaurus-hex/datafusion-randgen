@@ -1,14 +1,17 @@
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
-use datafusion::arrow::array::{Array, AsArray, TimestampMillisecondArray};
-use datafusion::arrow::datatypes::{DataType, TimeUnit, TimestampMillisecondType};
-use datafusion::common::{exec_err, internal_err};
-use datafusion::error::Result;
-use datafusion::logical_expr::{
-    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
+use arrow_array::cast::AsArray;
+use arrow_array::types::TimestampMillisecondType;
+use arrow_array::{Array, TimestampMillisecondArray};
+use arrow_schema::{DataType, TimeUnit};
+use datafusion_common::Result;
+use datafusion_common::{exec_err, internal_err, plan_err};
+use datafusion_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TIMEZONE_WILDCARD, TypeSignature,
+    Volatility,
 };
-use rand::RngExt;
+use rand::Rng;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TimestampMillisecond {
@@ -18,15 +21,45 @@ pub struct TimestampMillisecond {
 static TIMESTAMP_MILLISECOND_TYPE: LazyLock<DataType> =
     LazyLock::new(|| DataType::Timestamp(TimeUnit::Millisecond, None));
 
+static TIMESTAMP_MILLISECOND_TIMEZONE_TYPE: LazyLock<DataType> =
+    LazyLock::new(|| DataType::Timestamp(TimeUnit::Millisecond, Some(TIMEZONE_WILDCARD.into())));
+
 static TIMESTAMP_MILLISECOND_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
-    Signature::exact(
+    Signature::one_of(
         vec![
-            TIMESTAMP_MILLISECOND_TYPE.clone(),
-            TIMESTAMP_MILLISECOND_TYPE.clone(),
+            TypeSignature::Exact(vec![
+                TIMESTAMP_MILLISECOND_TYPE.clone(),
+                TIMESTAMP_MILLISECOND_TYPE.clone(),
+            ]),
+            TypeSignature::Exact(vec![
+                TIMESTAMP_MILLISECOND_TIMEZONE_TYPE.clone(),
+                TIMESTAMP_MILLISECOND_TIMEZONE_TYPE.clone(),
+            ]),
         ],
         Volatility::Volatile,
     )
 });
+
+fn timestamp_millisecond_type(
+    min_type: &DataType,
+    max_type: &DataType,
+    name: &str,
+) -> Result<DataType> {
+    match (min_type, max_type) {
+        (
+            DataType::Timestamp(TimeUnit::Millisecond, min_timezone),
+            DataType::Timestamp(TimeUnit::Millisecond, max_timezone),
+        ) if min_timezone == max_timezone => Ok(DataType::Timestamp(
+            TimeUnit::Millisecond,
+            min_timezone.clone(),
+        )),
+        (
+            DataType::Timestamp(TimeUnit::Millisecond, _),
+            DataType::Timestamp(TimeUnit::Millisecond, _),
+        ) => plan_err!("{name} requires matching timestamp timezones"),
+        _ => plan_err!("{name} expects Timestamp(Millisecond, timezone) arguments"),
+    }
+}
 
 impl TimestampMillisecond {
     pub fn new() -> Self {
@@ -55,8 +88,11 @@ impl ScalarUDFImpl for TimestampMillisecond {
         self.signature
     }
 
-    fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
-        Ok(TIMESTAMP_MILLISECOND_TYPE.clone())
+    fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
+        let [min_type, max_type] = arg_types else {
+            return plan_err!("{} expects exactly two arguments", self.name());
+        };
+        timestamp_millisecond_type(min_type, max_type, self.name())
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
@@ -68,14 +104,8 @@ impl ScalarUDFImpl for TimestampMillisecond {
             Err(_) => return internal_err!("{} expects exactly two arguments", self.name()),
         };
 
-        if min.data_type() != *TIMESTAMP_MILLISECOND_TYPE
-            || max.data_type() != *TIMESTAMP_MILLISECOND_TYPE
-        {
-            return internal_err!(
-                "{} expects Timestamp(Millisecond, None) arguments",
-                self.name()
-            );
-        }
+        let output_type =
+            timestamp_millisecond_type(&min.data_type(), &max.data_type(), self.name())?;
 
         let min_array = min.into_array_of_size(number_rows)?;
         let max_array = max.into_array_of_size(number_rows)?;
@@ -102,15 +132,23 @@ impl ScalarUDFImpl for TimestampMillisecond {
             values.push(Some(rng.random_range(min..=max)));
         }
 
+        let DataType::Timestamp(TimeUnit::Millisecond, timezone) = output_type else {
+            unreachable!("timestamp_millisecond_type only returns millisecond timestamps");
+        };
         Ok(ColumnarValue::Array(Arc::new(
-            TimestampMillisecondArray::from(values),
+            TimestampMillisecondArray::from(values).with_timezone_opt(timezone),
         )))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use datafusion::logical_expr::ScalarUDF;
+    use std::sync::Arc;
+
+    use arrow_schema::Field;
+    use datafusion_common::config::ConfigOptions;
+    use datafusion_expr::ScalarUDF;
+    use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl};
 
     use crate::randgen::test_helpers::querying::{query_result, query_to_values};
 
@@ -150,13 +188,45 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[tokio::test]
-    async fn timestamp_millisecond_rejects_other_timestamp_units() {
-        let result = query_result(
-            ScalarUDF::from(TimestampMillisecond::new()),
-            "SELECT randgen_timestamp_millisecond(to_timestamp('2024-01-01T00:00:00Z'), to_timestamp('2024-01-02T00:00:00Z')) FROM generate_series(1, 10)",
-        )
-        .await;
+    #[test]
+    fn timestamp_millisecond_preserves_matching_timezone() {
+        let data_type = DataType::Timestamp(TimeUnit::Millisecond, Some("+00:00".into()));
+        let min =
+            TimestampMillisecondArray::from(vec![Some(1_704_067_200_000)]).with_timezone("+00:00");
+        let max =
+            TimestampMillisecondArray::from(vec![Some(1_704_067_200_000)]).with_timezone("+00:00");
+        let field = Arc::new(Field::new("value", data_type.clone(), true));
+
+        let result = TimestampMillisecond::new()
+            .invoke_with_args(ScalarFunctionArgs {
+                args: vec![
+                    ColumnarValue::Array(Arc::new(min)),
+                    ColumnarValue::Array(Arc::new(max)),
+                ],
+                arg_fields: vec![
+                    Arc::new(Field::new("min", data_type.clone(), true)),
+                    Arc::new(Field::new("max", data_type.clone(), true)),
+                ],
+                number_rows: 1,
+                return_field: field,
+                config_options: Arc::new(ConfigOptions::default()),
+            })
+            .unwrap();
+
+        let ColumnarValue::Array(array) = result else {
+            panic!("expected an array result");
+        };
+        assert_eq!(array.data_type(), &data_type);
+    }
+
+    #[test]
+    fn timestamp_millisecond_rejects_mismatched_timezones() {
+        let result = timestamp_millisecond_type(
+            &DataType::Timestamp(TimeUnit::Millisecond, Some("+00:00".into())),
+            &DataType::Timestamp(TimeUnit::Millisecond, Some("+08:00".into())),
+            "randgen_timestamp_millisecond",
+        );
+
         assert!(result.is_err());
     }
 }

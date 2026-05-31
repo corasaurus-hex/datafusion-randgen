@@ -1,13 +1,13 @@
 use std::any::Any;
 
-use datafusion::arrow::array::{Array, AsArray, Int64Array};
-use datafusion::arrow::datatypes::{DataType, Int64Type};
-use datafusion::common::{exec_err, internal_err};
-use datafusion::error::Result;
-use datafusion::logical_expr::{
-    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
-};
-use rand::RngExt;
+use arrow_array::cast::AsArray;
+use arrow_array::types::Int64Type;
+use arrow_array::{Array, Int64Array};
+use arrow_schema::DataType;
+use datafusion_common::Result;
+use datafusion_common::{exec_err, internal_err};
+use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use rand::Rng;
 use std::sync::{Arc, LazyLock};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -94,10 +94,9 @@ impl ScalarUDFImpl for Int64Uniform {
 
 #[cfg(test)]
 mod tests {
-    use datafusion::{
-        arrow::datatypes::{DataType, Int64Type},
-        logical_expr::ScalarUDF,
-    };
+    use arrow_array::types::Int64Type;
+    use arrow_schema::DataType;
+    use datafusion_expr::ScalarUDF;
 
     use crate::randgen::test_helpers::querying::query_to_values;
 

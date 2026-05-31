@@ -1,14 +1,15 @@
 #[cfg(test)]
 pub(crate) mod querying {
-    use datafusion::arrow::array::{ArrowPrimitiveType, PrimitiveArray};
-    use datafusion::arrow::datatypes::DataType;
-    use datafusion::logical_expr::ScalarUDF;
+    use arrow_array::types::ArrowPrimitiveType;
+    use arrow_array::{PrimitiveArray, RecordBatch};
+    use arrow_schema::DataType;
     use datafusion::prelude::SessionContext;
+    use datafusion_expr::ScalarUDF;
 
     pub(crate) async fn query_result(
         udf: ScalarUDF,
         query: &str,
-    ) -> datafusion::error::Result<Vec<datafusion::arrow::record_batch::RecordBatch>> {
+    ) -> datafusion_common::Result<Vec<RecordBatch>> {
         let ctx = SessionContext::new();
         ctx.register_udf(udf);
         let df = ctx.sql(query).await?;
@@ -23,7 +24,7 @@ pub(crate) mod querying {
                 let col = batch.column(0);
                 assert_eq!(col.data_type(), &DataType::Utf8);
                 col.as_any()
-                    .downcast_ref::<datafusion::arrow::array::StringArray>()
+                    .downcast_ref::<arrow_array::StringArray>()
                     .unwrap()
                     .iter()
                     .map(|value| value.map(str::to_owned))
@@ -42,7 +43,7 @@ pub(crate) mod querying {
                 let col = batch.column(0);
                 assert_eq!(col.data_type(), &DataType::Boolean);
                 col.as_any()
-                    .downcast_ref::<datafusion::arrow::array::BooleanArray>()
+                    .downcast_ref::<arrow_array::BooleanArray>()
                     .unwrap()
                     .iter()
                     .collect::<Vec<_>>()

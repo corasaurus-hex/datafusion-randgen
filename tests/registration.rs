@@ -1,16 +1,18 @@
 use datafusion::prelude::SessionContext;
-use datafusion_randgen::add_udfs;
+use datafusion_randgen::all_udfs;
 
 async fn query_succeeds(sql: &str) {
-    let mut ctx = SessionContext::new();
-    add_udfs(&mut ctx);
+    let ctx = SessionContext::new();
+    for udf in all_udfs() {
+        ctx.register_udf(udf);
+    }
     let df = ctx.sql(sql).await.unwrap();
     let batches = df.collect().await.unwrap();
     assert!(!batches.is_empty());
 }
 
 #[tokio::test]
-async fn add_udfs_registers_all_generators() {
+async fn all_udfs_registers_all_generators() {
     query_succeeds(
         "SELECT \
             randgen_int64_uniform(1, 1), \
