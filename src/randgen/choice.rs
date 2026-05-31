@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
-use datafusion::arrow::array::{Array, AsArray};
+use datafusion::arrow::array::{Array, AsArray, new_empty_array};
 use datafusion::arrow::datatypes::{DataType, Field};
 use datafusion::common::{ScalarValue, exec_err, internal_err, plan_err};
 use datafusion::error::Result;
@@ -86,6 +86,11 @@ impl ScalarUDFImpl for Choice {
         if item_field.data_type() != return_field.data_type() {
             return internal_err!("{} return field does not match list item type", self.name());
         }
+        if number_rows == 0 {
+            return Ok(ColumnarValue::Array(new_empty_array(
+                return_field.data_type(),
+            )));
+        }
 
         let choices = choices.as_list::<i32>();
         let mut rng = rand::rng();
@@ -114,7 +119,17 @@ impl ScalarUDFImpl for Choice {
 
 #[cfg(test)]
 mod tests {
-    use datafusion::logical_expr::ScalarUDF;
+    use std::sync::Arc;
+
+    use datafusion::{
+        arrow::{
+            datatypes::{DataType, Field, Schema},
+            record_batch::RecordBatch,
+        },
+        datasource::MemTable,
+        logical_expr::ScalarUDF,
+        prelude::SessionContext,
+    };
 
     use crate::randgen::test_helpers::querying::{query_result, query_to_string_values};
 
@@ -168,5 +183,35 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn choice_empty_batch_returns_empty_array() {
+        let ctx = SessionContext::new();
+        ctx.register_udf(ScalarUDF::from(Choice::new()));
+
+        let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, true)]));
+        let table = MemTable::try_new(
+            Arc::clone(&schema),
+            vec![vec![RecordBatch::new_empty(Arc::clone(&schema))]],
+        )
+        .unwrap();
+        ctx.register_table("empty_table", Arc::new(table)).unwrap();
+
+        let batches = ctx
+            .sql("SELECT randgen_choice(['UTC']) FROM empty_table")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        assert!(!batches.is_empty());
+        assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 0);
+        assert!(
+            batches
+                .iter()
+                .all(|batch| batch.column(0).data_type() == &DataType::Utf8)
+        );
     }
 }
