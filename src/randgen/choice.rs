@@ -1,4 +1,8 @@
-//! List choice random generator UDF implementation.
+//! List choice random generator.
+//!
+//! `randgen_choice(choices)` samples one item from a `List<T>` and returns
+//! type `T`. Non-null lists must contain at least one element. A null list
+//! produces null output for that row.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -18,7 +22,7 @@ use rand::Rng;
 use crate::randgen::utils::exact_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// Implements `randgen_choice(choices)`.
+/// `ScalarUDFImpl` for `randgen_choice(choices)`.
 pub struct Choice {
     signature: &'static Signature,
 }
@@ -152,7 +156,7 @@ fn choose_from_scalar_float64_list(
 }
 
 impl Choice {
-    /// Creates a `randgen_choice` UDF implementation.
+    /// Creates the `randgen_choice` implementation.
     pub fn new() -> Self {
         Self {
             signature: &CHOICE_SIGNATURE,
@@ -274,12 +278,16 @@ impl ScalarUDFImpl for Choice {
 mod tests {
     use std::sync::Arc;
 
-    use arrow_array::RecordBatch;
+    use arrow_array::types::{Float64Type, Int64Type};
+    use arrow_array::{Array, RecordBatch};
     use arrow_schema::{DataType, Field, Schema};
     use datafusion::{datasource::MemTable, prelude::SessionContext};
-    use datafusion_expr::ScalarUDF;
+    use datafusion_common::config::ConfigOptions;
+    use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl};
 
-    use crate::randgen::test_helpers::querying::{query_result, query_to_string_values};
+    use crate::randgen::test_helpers::querying::{
+        query_result, query_to_string_values, query_to_values,
+    };
 
     use super::*;
 
@@ -324,6 +332,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn choice_int64_scalar_list_returns_int64_values() {
+        let values = query_to_values::<Int64Type>(
+            ScalarUDF::from(Choice::new()),
+            "SELECT randgen_choice([7]) FROM generate_series(1, 10)",
+            DataType::Int64,
+        )
+        .await;
+
+        assert!(values.iter().all(|value| *value == Some(7)));
+    }
+
+    #[tokio::test]
+    async fn choice_float64_scalar_list_returns_float64_values() {
+        let values = query_to_values::<Float64Type>(
+            ScalarUDF::from(Choice::new()),
+            "SELECT randgen_choice([3.5]) FROM generate_series(1, 10)",
+            DataType::Float64,
+        )
+        .await;
+
+        assert!(values.iter().all(|value| *value == Some(3.5)));
+    }
+
+    #[tokio::test]
     async fn choice_empty_list_errors() {
         let result = query_result(
             ScalarUDF::from(Choice::new()),
@@ -360,6 +392,37 @@ mod tests {
             batches
                 .iter()
                 .all(|batch| batch.column(0).data_type() == &DataType::Utf8)
+        );
+    }
+
+    #[test]
+    fn choice_list_column_preserves_null_rows() {
+        let choices = ListArray::from_iter_primitive::<Int64Type, _, _>(vec![
+            Some(vec![Some(7)]),
+            None,
+            Some(vec![Some(9)]),
+        ]);
+        let result = Choice::new()
+            .invoke_with_args(ScalarFunctionArgs {
+                args: vec![ColumnarValue::Array(Arc::new(choices))],
+                arg_fields: vec![Arc::new(Field::new(
+                    "choices",
+                    DataType::List(Arc::new(Field::new("item", DataType::Int64, true))),
+                    true,
+                ))],
+                number_rows: 3,
+                return_field: Arc::new(Field::new("randgen_choice", DataType::Int64, true)),
+                config_options: Arc::new(ConfigOptions::default()),
+            })
+            .unwrap();
+
+        let ColumnarValue::Array(array) = result else {
+            panic!("expected an array result");
+        };
+        let values = array.as_primitive::<Int64Type>();
+        assert_eq!(
+            values.iter().collect::<Vec<_>>(),
+            vec![Some(7), None, Some(9)]
         );
     }
 }

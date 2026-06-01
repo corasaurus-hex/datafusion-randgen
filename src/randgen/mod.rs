@@ -1,20 +1,25 @@
-//! Concrete DataFusion UDF implementations.
+//! Concrete `ScalarUDFImpl` types for the random generators.
+//!
+//! These modules contain the implementation detail behind the top-level
+//! constructors. They are public for callers that need direct access to a UDF
+//! implementation type, but registration code usually only needs
+//! `datafusion_randgen::all_udfs()` or one of the `*_udf` helpers.
 
-/// Boolean random generator UDF implementation.
+/// Implementation for `randgen_bool`.
 pub mod bool;
-/// List choice random generator UDF implementation.
+/// Implementation for `randgen_choice`.
 pub mod choice;
-/// Date32 random generator UDF implementation.
+/// Implementation for `randgen_date32`.
 pub mod date32;
-/// Float64 normal distribution random generator UDF implementation.
+/// Implementation for `randgen_float64_normal`.
 pub mod float64_normal;
-/// Float64 uniform random generator UDF implementation.
+/// Implementation for `randgen_float64_uniform`.
 pub mod float64_uniform;
-/// Int64 uniform random generator UDF implementation.
+/// Implementation for `randgen_int64_uniform`.
 pub mod int64_uniform;
-/// Timestamp millisecond random generator UDF implementation.
+/// Implementation for `randgen_timestamp_millisecond`.
 pub mod timestamp_millisecond;
-/// Utf8 random generator UDF implementation.
+/// Implementation for `randgen_utf8`.
 pub mod utf8;
 pub(crate) mod utils;
 

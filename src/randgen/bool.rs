@@ -1,4 +1,8 @@
-//! Boolean random generator UDF implementation.
+//! Boolean random generator.
+//!
+//! `randgen_bool(probability)` returns `true` with the supplied probability.
+//! The probability must be finite and within `0.0..=1.0`; null input yields
+//! null output for that row.
 
 use std::any::Any;
 use std::sync::LazyLock;
@@ -15,7 +19,7 @@ use std::sync::Arc;
 use crate::randgen::utils::one_array_arg;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// Implements `randgen_bool(probability)`.
+/// `ScalarUDFImpl` for `randgen_bool(probability)`.
 pub struct Bool {
     signature: &'static Signature,
 }
@@ -24,7 +28,7 @@ static BOOL_SIGNATURE: LazyLock<Signature> =
     LazyLock::new(|| Signature::exact(vec![DataType::Float64], Volatility::Volatile));
 
 impl Bool {
-    /// Creates a `randgen_bool` UDF implementation.
+    /// Creates the `randgen_bool` implementation.
     pub fn new() -> Self {
         Self {
             signature: &BOOL_SIGNATURE,
@@ -170,6 +174,28 @@ mod tests {
             "SELECT randgen_bool(1.1) FROM generate_series(1, 10)",
         )
         .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn bool_array_probability_propagates_nulls() {
+        let values = query_to_bool_values(
+            ScalarUDF::from(Bool::new()),
+            "SELECT randgen_bool(p) FROM (VALUES (0.0), (1.0), (CAST(NULL AS DOUBLE))) AS t(p)",
+        )
+        .await;
+
+        assert_eq!(values, vec![Some(false), Some(true), None]);
+    }
+
+    #[tokio::test]
+    async fn bool_array_invalid_probability_errors() {
+        let result = query_result(
+            ScalarUDF::from(Bool::new()),
+            "SELECT randgen_bool(p) FROM (VALUES (0.5), (1.1)) AS t(p)",
+        )
+        .await;
+
         assert!(result.is_err());
     }
 }

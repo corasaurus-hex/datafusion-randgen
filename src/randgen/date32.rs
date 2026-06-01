@@ -1,4 +1,8 @@
-//! Date32 random generator UDF implementation.
+//! Date32 random generator.
+//!
+//! `randgen_date32(min, max)` samples a date from the inclusive day range
+//! `min..=max`. Null bounds produce null output for that row. Non-null bounds
+//! must satisfy `min <= max`.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -14,7 +18,7 @@ use rand::Rng;
 use crate::randgen::utils::two_array_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// Implements `randgen_date32(min, max)`.
+/// `ScalarUDFImpl` for `randgen_date32(min, max)`.
 pub struct Date32 {
     signature: &'static Signature,
 }
@@ -27,7 +31,7 @@ static DATE32_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
 });
 
 impl Date32 {
-    /// Creates a `randgen_date32` UDF implementation.
+    /// Creates the `randgen_date32` implementation.
     pub fn new() -> Self {
         Self {
             signature: &DATE32_SIGNATURE,
@@ -199,5 +203,29 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn date32_array_bounds_propagate_nulls() {
+        let values = query_to_values::<Date32Type>(
+            ScalarUDF::from(Date32::new()),
+            "SELECT randgen_date32(min_date, max_date) FROM (VALUES (to_date('2024-01-15'), to_date('2024-01-15')), (CAST(NULL AS DATE), to_date('2024-01-31')), (to_date('2024-01-01'), CAST(NULL AS DATE))) AS t(min_date, max_date)",
+            DataType::Date32,
+        )
+        .await;
+
+        assert_eq!(values, vec![Some(19737), None, None]);
+    }
+
+    #[tokio::test]
+    async fn date32_array_bounds_without_nulls_use_column_values() {
+        let values = query_to_values::<Date32Type>(
+            ScalarUDF::from(Date32::new()),
+            "SELECT randgen_date32(min_date, max_date) FROM (VALUES (to_date('2024-01-15'), to_date('2024-01-15')), (to_date('2024-01-16'), to_date('2024-01-16'))) AS t(min_date, max_date)",
+            DataType::Date32,
+        )
+        .await;
+
+        assert_eq!(values, vec![Some(19737), Some(19738)]);
     }
 }

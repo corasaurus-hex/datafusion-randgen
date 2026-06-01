@@ -1,4 +1,8 @@
-//! Timestamp millisecond random generator UDF implementation.
+//! Millisecond timestamp random generator.
+//!
+//! `randgen_timestamp_millisecond(min, max)` samples from the inclusive
+//! timestamp range `min..=max`. Arguments must use millisecond precision and
+//! matching timezones. Null bounds produce null output for that row.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -18,7 +22,7 @@ use rand::Rng;
 use crate::randgen::utils::exact_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// Implements `randgen_timestamp_millisecond(min, max)`.
+/// `ScalarUDFImpl` for `randgen_timestamp_millisecond(min, max)`.
 pub struct TimestampMillisecond {
     signature: &'static Signature,
 }
@@ -67,7 +71,7 @@ fn timestamp_millisecond_type(
 }
 
 impl TimestampMillisecond {
-    /// Creates a `randgen_timestamp_millisecond` UDF implementation.
+    /// Creates the `randgen_timestamp_millisecond` implementation.
     pub fn new() -> Self {
         Self {
             signature: &TIMESTAMP_MILLISECOND_SIGNATURE,
@@ -292,6 +296,39 @@ mod tests {
             panic!("expected an array result");
         };
         assert_eq!(array.data_type(), &data_type);
+    }
+
+    #[test]
+    fn timestamp_millisecond_array_args_propagate_nulls() {
+        let data_type = TIMESTAMP_MILLISECOND_TYPE.clone();
+        let min = TimestampMillisecondArray::from(vec![Some(1_704_067_200_000), None]);
+        let max =
+            TimestampMillisecondArray::from(vec![Some(1_704_067_200_000), Some(1_704_153_600_000)]);
+
+        let result = TimestampMillisecond::new()
+            .invoke_with_args(ScalarFunctionArgs {
+                args: vec![
+                    ColumnarValue::Array(Arc::new(min)),
+                    ColumnarValue::Array(Arc::new(max)),
+                ],
+                arg_fields: vec![
+                    Arc::new(Field::new("min", data_type.clone(), true)),
+                    Arc::new(Field::new("max", data_type.clone(), true)),
+                ],
+                number_rows: 2,
+                return_field: Arc::new(Field::new("value", data_type, true)),
+                config_options: Arc::new(ConfigOptions::default()),
+            })
+            .unwrap();
+
+        let ColumnarValue::Array(array) = result else {
+            panic!("expected an array result");
+        };
+        let values = array.as_primitive::<TimestampMillisecondType>();
+        assert_eq!(
+            values.iter().collect::<Vec<_>>(),
+            vec![Some(1_704_067_200_000), None]
+        );
     }
 
     #[test]

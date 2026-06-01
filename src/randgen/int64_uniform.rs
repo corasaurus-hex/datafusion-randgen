@@ -1,4 +1,8 @@
-//! Int64 uniform random generator UDF implementation.
+//! Int64 uniform random generator.
+//!
+//! `randgen_int64_uniform(min, max)` samples from the inclusive integer range
+//! `min..=max`. Null bounds produce null output for that row. Non-null bounds
+//! must satisfy `min <= max`.
 
 use std::any::Any;
 
@@ -14,7 +18,7 @@ use std::sync::{Arc, LazyLock};
 use crate::randgen::utils::two_array_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// Implements `randgen_int64_uniform(min, max)`.
+/// `ScalarUDFImpl` for `randgen_int64_uniform(min, max)`.
 pub struct Int64Uniform {
     signature: &'static Signature,
 }
@@ -24,7 +28,7 @@ static INT64_UNIFORM_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
 });
 
 impl Int64Uniform {
-    /// Creates a `randgen_int64_uniform` UDF implementation.
+    /// Creates the `randgen_int64_uniform` implementation.
     pub fn new() -> Self {
         Self {
             signature: &INT64_UNIFORM_SIGNATURE,

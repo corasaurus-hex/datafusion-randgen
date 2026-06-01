@@ -1,4 +1,8 @@
-//! Float64 normal distribution random generator UDF implementation.
+//! Float64 normal-distribution random generator.
+//!
+//! `randgen_float64_normal(mean, stddev)` samples from a normal distribution.
+//! Both arguments must be finite, and `stddev` must be greater than zero. Null
+//! input yields null output for that row.
 
 use std::any::Any;
 use std::sync::LazyLock;
@@ -16,7 +20,7 @@ use std::sync::Arc;
 use crate::randgen::utils::two_array_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// Implements `randgen_float64_normal(mean, stddev)`.
+/// `ScalarUDFImpl` for `randgen_float64_normal(mean, stddev)`.
 pub struct Float64Normal {
     signature: &'static Signature,
 }
@@ -29,7 +33,7 @@ static FLOAT64_NORMAL_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
 });
 
 impl Float64Normal {
-    /// Creates a `randgen_float64_normal` UDF implementation.
+    /// Creates the `randgen_float64_normal` implementation.
     pub fn new() -> Self {
         Self {
             signature: &FLOAT64_NORMAL_SIGNATURE,
@@ -198,5 +202,30 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn float64_normal_array_args_propagate_nulls() {
+        let values = query_to_values::<Float64Type>(
+            ScalarUDF::from(Float64Normal::new()),
+            "SELECT randgen_float64_normal(mean, stddev) FROM (VALUES (10.0, 1.0), (CAST(NULL AS DOUBLE), 1.0), (10.0, CAST(NULL AS DOUBLE))) AS t(mean, stddev)",
+            DataType::Float64,
+        )
+        .await;
+
+        assert!(values[0].is_some_and(f64::is_finite));
+        assert_eq!(values[1..], [None, None]);
+    }
+
+    #[tokio::test]
+    async fn float64_normal_array_args_without_nulls_outputs_finite_values() {
+        let values = query_to_values::<Float64Type>(
+            ScalarUDF::from(Float64Normal::new()),
+            "SELECT randgen_float64_normal(mean, stddev) FROM (VALUES (10.0, 1.0), (20.0, 2.0)) AS t(mean, stddev)",
+            DataType::Float64,
+        )
+        .await;
+
+        assert!(values.iter().all(|value| value.is_some_and(f64::is_finite)));
     }
 }

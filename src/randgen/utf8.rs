@@ -1,4 +1,9 @@
-//! Utf8 random generator UDF implementation.
+//! UTF-8 string random generator.
+//!
+//! `randgen_utf8(characters, min_length, max_length)` builds strings from the
+//! distinct characters in `characters`. Lengths are measured in characters, not
+//! bytes. Bounds must satisfy `0 <= min_length <= max_length`, and the
+//! generated array must fit Arrow's `Utf8` offset limit.
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -57,7 +62,7 @@ fn parse_alphabet(characters: &str, name: &str) -> Result<Arc<Alphabet>> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// Implements `randgen_utf8(characters, min_length, max_length)`.
+/// `ScalarUDFImpl` for `randgen_utf8(characters, min_length, max_length)`.
 pub struct Utf8 {
     signature: &'static Signature,
 }
@@ -70,7 +75,7 @@ static UTF8_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
 });
 
 impl Utf8 {
-    /// Creates a `randgen_utf8` UDF implementation.
+    /// Creates the `randgen_utf8` implementation.
     pub fn new() -> Self {
         Self {
             signature: &UTF8_SIGNATURE,
@@ -360,5 +365,27 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn utf8_array_args_propagate_nulls() {
+        let values = query_to_string_values(
+            ScalarUDF::from(Utf8::new()),
+            "SELECT randgen_utf8(characters, min_length, max_length) FROM (VALUES ('A', 3, 3), (CAST(NULL AS STRING), 1, 2), ('B', CAST(NULL AS BIGINT), 2), ('C', 1, CAST(NULL AS BIGINT))) AS t(characters, min_length, max_length)",
+        )
+        .await;
+
+        assert_eq!(values, vec![Some("AAA".to_owned()), None, None, None]);
+    }
+
+    #[tokio::test]
+    async fn utf8_array_args_reuse_repeated_alphabets_per_invocation() {
+        let values = query_to_string_values(
+            ScalarUDF::from(Utf8::new()),
+            "SELECT randgen_utf8(characters, min_length, max_length) FROM (VALUES ('A', 1, 1), ('A', 2, 2)) AS t(characters, min_length, max_length)",
+        )
+        .await;
+
+        assert_eq!(values, vec![Some("A".to_owned()), Some("AA".to_owned())]);
     }
 }

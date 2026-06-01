@@ -1,4 +1,8 @@
-//! Float64 uniform random generator UDF implementation.
+//! Float64 uniform random generator.
+//!
+//! `randgen_float64_uniform(min, max)` samples from the inclusive range
+//! `min..=max`. Bounds must be finite, the span must be finite, and `min` must
+//! not exceed `max`. Null bounds produce null output for that row.
 
 use std::any::Any;
 use std::sync::LazyLock;
@@ -15,7 +19,7 @@ use std::sync::Arc;
 use crate::randgen::utils::two_array_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// Implements `randgen_float64_uniform(min, max)`.
+/// `ScalarUDFImpl` for `randgen_float64_uniform(min, max)`.
 pub struct Float64Uniform {
     signature: &'static Signature,
 }
@@ -28,7 +32,7 @@ static FLOAT64_UNIFORM_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
 });
 
 impl Float64Uniform {
-    /// Creates a `randgen_float64_uniform` UDF implementation.
+    /// Creates the `randgen_float64_uniform` implementation.
     pub fn new() -> Self {
         Self {
             signature: &FLOAT64_UNIFORM_SIGNATURE,
@@ -249,5 +253,29 @@ mod tests {
         )
         .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn float64_uniform_array_bounds_propagate_nulls() {
+        let values = query_to_values::<Float64Type>(
+            ScalarUDF::from(Float64Uniform::new()),
+            "SELECT randgen_float64_uniform(min_value, max_value) FROM (VALUES (3.5, 3.5), (CAST(NULL AS DOUBLE), 2.5), (1.0, CAST(NULL AS DOUBLE))) AS t(min_value, max_value)",
+            DataType::Float64,
+        )
+        .await;
+
+        assert_eq!(values, vec![Some(3.5), None, None]);
+    }
+
+    #[tokio::test]
+    async fn float64_uniform_array_bounds_without_nulls_use_column_values() {
+        let values = query_to_values::<Float64Type>(
+            ScalarUDF::from(Float64Uniform::new()),
+            "SELECT randgen_float64_uniform(min_value, max_value) FROM (VALUES (3.5, 3.5), (4.5, 4.5)) AS t(min_value, max_value)",
+            DataType::Float64,
+        )
+        .await;
+
+        assert_eq!(values, vec![Some(3.5), Some(4.5)]);
     }
 }
