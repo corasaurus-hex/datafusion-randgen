@@ -5,8 +5,7 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::Float64Type;
 use arrow_array::{Array, Float64Array};
 use arrow_schema::DataType;
-use datafusion_common::Result;
-use datafusion_common::exec_err;
+use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 use std::sync::Arc;
@@ -39,6 +38,49 @@ impl Default for Float64Uniform {
     }
 }
 
+impl Float64Uniform {
+    fn invoke_scalar_args(
+        &self,
+        min: Option<f64>,
+        max: Option<f64>,
+        number_rows: usize,
+    ) -> Result<ColumnarValue> {
+        let mut rng = rand::rng();
+        let mut values = Vec::with_capacity(number_rows);
+        for _ in 0..number_rows {
+            let (Some(min), Some(max)) = (min, max) else {
+                values.push(None);
+                continue;
+            };
+
+            if !min.is_finite() || !max.is_finite() {
+                return exec_err!("{} requires finite bounds", self.name());
+            }
+            if min > max {
+                return exec_err!(
+                    "{} requires min <= max, got min {min} and max {max}",
+                    self.name()
+                );
+            }
+            if !(max - min).is_finite() {
+                return exec_err!(
+                    "{} requires finite distance between bounds, got min {min} and max {max}",
+                    self.name()
+                );
+            }
+
+            let value = if min == max {
+                min
+            } else {
+                rng.random_range(min..=max)
+            };
+            values.push(Some(value));
+        }
+
+        Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))))
+    }
+}
+
 impl ScalarUDFImpl for Float64Uniform {
     fn as_any(&self) -> &dyn Any {
         self
@@ -56,8 +98,17 @@ impl ScalarUDFImpl for Float64Uniform {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
+        let [min, max] = crate::randgen::utils::exact_args(args, self.name())?;
+        if let (
+            ColumnarValue::Scalar(ScalarValue::Float64(min)),
+            ColumnarValue::Scalar(ScalarValue::Float64(max)),
+        ) = (&min, &max)
+        {
+            return self.invoke_scalar_args(*min, *max, number_rows);
+        }
+
         let (min_array, max_array) = two_array_args(
-            args,
+            vec![min, max],
             (DataType::Float64, "Float64 arguments"),
             (DataType::Float64, "Float64 arguments"),
             number_rows,

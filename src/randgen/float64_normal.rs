@@ -5,8 +5,7 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::Float64Type;
 use arrow_array::{Array, Float64Array};
 use arrow_schema::DataType;
-use datafusion_common::Result;
-use datafusion_common::exec_err;
+use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 use rand_distr::Normal;
@@ -40,6 +39,40 @@ impl Default for Float64Normal {
     }
 }
 
+impl Float64Normal {
+    fn invoke_scalar_args(
+        &self,
+        mean: Option<f64>,
+        stddev: Option<f64>,
+        number_rows: usize,
+    ) -> Result<ColumnarValue> {
+        let mut rng = rand::rng();
+        let mut values = Vec::with_capacity(number_rows);
+        for _ in 0..number_rows {
+            let (Some(mean), Some(stddev)) = (mean, stddev) else {
+                values.push(None);
+                continue;
+            };
+
+            if !mean.is_finite() || !stddev.is_finite() {
+                return exec_err!("{} requires finite mean and stddev", self.name());
+            }
+            if stddev <= 0.0 {
+                return exec_err!("{} requires stddev > 0", self.name());
+            }
+            let normal = Normal::new(mean, stddev).map_err(|error| {
+                datafusion_common::DataFusionError::Execution(format!(
+                    "{} invalid normal distribution parameters: {error}",
+                    self.name()
+                ))
+            })?;
+            values.push(Some(rng.sample(normal)));
+        }
+
+        Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))))
+    }
+}
+
 impl ScalarUDFImpl for Float64Normal {
     fn as_any(&self) -> &dyn Any {
         self
@@ -57,8 +90,17 @@ impl ScalarUDFImpl for Float64Normal {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
+        let [mean, stddev] = crate::randgen::utils::exact_args(args, self.name())?;
+        if let (
+            ColumnarValue::Scalar(ScalarValue::Float64(mean)),
+            ColumnarValue::Scalar(ScalarValue::Float64(stddev)),
+        ) = (&mean, &stddev)
+        {
+            return self.invoke_scalar_args(*mean, *stddev, number_rows);
+        }
+
         let (mean_array, stddev_array) = two_array_args(
-            args,
+            vec![mean, stddev],
             (DataType::Float64, "Float64 arguments"),
             (DataType::Float64, "Float64 arguments"),
             number_rows,

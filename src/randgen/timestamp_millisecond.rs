@@ -5,7 +5,7 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::TimestampMillisecondType;
 use arrow_array::{Array, TimestampMillisecondArray};
 use arrow_schema::{DataType, TimeUnit};
-use datafusion_common::Result;
+use datafusion_common::{Result, ScalarValue};
 use datafusion_common::{exec_err, plan_err};
 use datafusion_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TIMEZONE_WILDCARD, TypeSignature,
@@ -77,6 +77,38 @@ impl Default for TimestampMillisecond {
     }
 }
 
+impl TimestampMillisecond {
+    fn invoke_scalar_args(
+        &self,
+        min: Option<i64>,
+        max: Option<i64>,
+        timezone: Option<Arc<str>>,
+        number_rows: usize,
+    ) -> Result<ColumnarValue> {
+        let mut rng = rand::rng();
+        let mut values = Vec::with_capacity(number_rows);
+        for _ in 0..number_rows {
+            let (Some(min), Some(max)) = (min, max) else {
+                values.push(None);
+                continue;
+            };
+
+            if min > max {
+                return exec_err!(
+                    "{} requires min <= max, got min {min} and max {max}",
+                    self.name()
+                );
+            }
+
+            values.push(Some(rng.random_range(min..=max)));
+        }
+
+        Ok(ColumnarValue::Array(Arc::new(
+            TimestampMillisecondArray::from(values).with_timezone_opt(timezone),
+        )))
+    }
+}
+
 impl ScalarUDFImpl for TimestampMillisecond {
     fn as_any(&self) -> &dyn Any {
         self
@@ -105,6 +137,17 @@ impl ScalarUDFImpl for TimestampMillisecond {
 
         let output_type =
             timestamp_millisecond_type(&min.data_type(), &max.data_type(), self.name())?;
+
+        if let (
+            ColumnarValue::Scalar(ScalarValue::TimestampMillisecond(min_value, _)),
+            ColumnarValue::Scalar(ScalarValue::TimestampMillisecond(max_value, _)),
+        ) = (&min, &max)
+        {
+            let DataType::Timestamp(TimeUnit::Millisecond, timezone) = output_type else {
+                unreachable!("timestamp_millisecond_type only returns millisecond timestamps");
+            };
+            return self.invoke_scalar_args(*min_value, *max_value, timezone, number_rows);
+        }
 
         let min_array = min.into_array_of_size(number_rows)?;
         let max_array = max.into_array_of_size(number_rows)?;

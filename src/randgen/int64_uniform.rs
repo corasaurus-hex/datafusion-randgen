@@ -4,8 +4,7 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::Int64Type;
 use arrow_array::{Array, Int64Array};
 use arrow_schema::DataType;
-use datafusion_common::Result;
-use datafusion_common::exec_err;
+use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 use std::sync::{Arc, LazyLock};
@@ -35,6 +34,35 @@ impl Default for Int64Uniform {
     }
 }
 
+impl Int64Uniform {
+    fn invoke_scalar_args(
+        &self,
+        min: Option<i64>,
+        max: Option<i64>,
+        number_rows: usize,
+    ) -> Result<ColumnarValue> {
+        let mut rng = rand::rng();
+        let mut values = Vec::with_capacity(number_rows);
+        for _ in 0..number_rows {
+            let (Some(min), Some(max)) = (min, max) else {
+                values.push(None);
+                continue;
+            };
+
+            if min > max {
+                return exec_err!(
+                    "{} requires min <= max, got min {min} and max {max}",
+                    self.name()
+                );
+            }
+
+            values.push(Some(rng.random_range(min..=max)));
+        }
+
+        Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))))
+    }
+}
+
 impl ScalarUDFImpl for Int64Uniform {
     fn as_any(&self) -> &dyn Any {
         self
@@ -56,8 +84,17 @@ impl ScalarUDFImpl for Int64Uniform {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
+        let [min, max] = crate::randgen::utils::exact_args(args, self.name())?;
+        if let (
+            ColumnarValue::Scalar(ScalarValue::Int64(min)),
+            ColumnarValue::Scalar(ScalarValue::Int64(max)),
+        ) = (&min, &max)
+        {
+            return self.invoke_scalar_args(*min, *max, number_rows);
+        }
+
         let (min_array, max_array) = two_array_args(
-            args,
+            vec![min, max],
             (DataType::Int64, "Int64 arguments"),
             (DataType::Int64, "Int64 arguments"),
             number_rows,

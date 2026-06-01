@@ -8,7 +8,7 @@ use arrow_array::types::Int64Type;
 use arrow_array::{Array, builder::StringBuilder};
 use arrow_schema::DataType;
 use datafusion_common::exec_err;
-use datafusion_common::{DataFusionError, Result};
+use datafusion_common::{DataFusionError, Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 
@@ -137,6 +137,75 @@ impl Default for Utf8 {
     }
 }
 
+impl Utf8 {
+    fn invoke_scalar_args(
+        &self,
+        characters: Option<&str>,
+        min_length: Option<i64>,
+        max_length: Option<i64>,
+        number_rows: usize,
+    ) -> Result<ColumnarValue> {
+        let (Some(characters), Some(min_length), Some(max_length)) =
+            (characters, min_length, max_length)
+        else {
+            let mut builder = StringBuilder::with_capacity(number_rows, 0);
+            for _ in 0..number_rows {
+                builder.append_null();
+            }
+            return Ok(ColumnarValue::Array(Arc::new(builder.finish())));
+        };
+
+        let alphabet = cached_alphabet(characters, self.name())?;
+        let mut total_max_bytes = 0_i64;
+        for _ in 0..number_rows {
+            if min_length < 0 || max_length < 0 || min_length > max_length {
+                return exec_err!("{} requires 0 <= min_length <= max_length", self.name());
+            }
+
+            let Some(row_max_bytes) = max_length.checked_mul(alphabet.max_character_bytes as i64)
+            else {
+                return exec_err!(
+                    "{} generated Utf8 output exceeds the Arrow Utf8 byte limit of {MAX_UTF8_ARRAY_BYTES}",
+                    self.name()
+                );
+            };
+            let Some(new_total_max_bytes) = total_max_bytes.checked_add(row_max_bytes) else {
+                return exec_err!(
+                    "{} generated Utf8 output exceeds the Arrow Utf8 byte limit of {MAX_UTF8_ARRAY_BYTES}",
+                    self.name()
+                );
+            };
+            if new_total_max_bytes > MAX_UTF8_ARRAY_BYTES {
+                return exec_err!(
+                    "{} generated Utf8 output exceeds the Arrow Utf8 byte limit of {MAX_UTF8_ARRAY_BYTES}",
+                    self.name()
+                );
+            }
+            total_max_bytes = new_total_max_bytes;
+        }
+
+        let mut rng = rand::rng();
+        let mut builder = StringBuilder::with_capacity(number_rows, 0);
+        for _ in 0..number_rows {
+            let length = rng.random_range(min_length..=max_length) as usize;
+            for _ in 0..length {
+                let index = rng.random_range(0..alphabet.characters.len());
+                builder
+                    .write_char(alphabet.characters[index])
+                    .map_err(|_| {
+                        DataFusionError::Execution(format!(
+                            "{} failed to write generated output",
+                            self.name()
+                        ))
+                    })?;
+            }
+            builder.append_value("");
+        }
+
+        Ok(ColumnarValue::Array(Arc::new(builder.finish())))
+    }
+}
+
 impl ScalarUDFImpl for Utf8 {
     fn as_any(&self) -> &dyn Any {
         self
@@ -158,8 +227,24 @@ impl ScalarUDFImpl for Utf8 {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
+        let [characters, min_length, max_length] =
+            crate::randgen::utils::exact_args(args, self.name())?;
+        if let (
+            ColumnarValue::Scalar(ScalarValue::Utf8(characters)),
+            ColumnarValue::Scalar(ScalarValue::Int64(min_length)),
+            ColumnarValue::Scalar(ScalarValue::Int64(max_length)),
+        ) = (&characters, &min_length, &max_length)
+        {
+            return self.invoke_scalar_args(
+                characters.as_deref(),
+                *min_length,
+                *max_length,
+                number_rows,
+            );
+        }
+
         let (characters_array, min_length_array, max_length_array) = three_array_args(
-            args,
+            vec![characters, min_length, max_length],
             (DataType::Utf8, "Utf8, Int64, Int64 arguments"),
             (DataType::Int64, "Utf8, Int64, Int64 arguments"),
             (DataType::Int64, "Utf8, Int64, Int64 arguments"),

@@ -5,8 +5,7 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::Float64Type;
 use arrow_array::{Array, BooleanArray};
 use arrow_schema::DataType;
-use datafusion_common::Result;
-use datafusion_common::exec_err;
+use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 use std::sync::Arc;
@@ -35,6 +34,35 @@ impl Default for Bool {
     }
 }
 
+impl Bool {
+    fn invoke_scalar_args(
+        &self,
+        probability: Option<f64>,
+        number_rows: usize,
+    ) -> Result<ColumnarValue> {
+        let mut rng = rand::rng();
+        let mut values = Vec::with_capacity(number_rows);
+
+        for _ in 0..number_rows {
+            let Some(probability) = probability else {
+                values.push(None);
+                continue;
+            };
+
+            if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
+                return exec_err!(
+                    "{} requires probability between 0.0 and 1.0 inclusive",
+                    self.name()
+                );
+            }
+
+            values.push(Some(rng.random_bool(probability)));
+        }
+
+        Ok(ColumnarValue::Array(Arc::new(BooleanArray::from(values))))
+    }
+}
+
 impl ScalarUDFImpl for Bool {
     fn as_any(&self) -> &dyn Any {
         self
@@ -56,8 +84,13 @@ impl ScalarUDFImpl for Bool {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
+        let [probability] = crate::randgen::utils::exact_args(args, self.name())?;
+        if let ColumnarValue::Scalar(ScalarValue::Float64(probability)) = &probability {
+            return self.invoke_scalar_args(*probability, number_rows);
+        }
+
         let probability_array = one_array_arg(
-            args,
+            vec![probability],
             (DataType::Float64, "a Float64 probability"),
             number_rows,
             self.name(),

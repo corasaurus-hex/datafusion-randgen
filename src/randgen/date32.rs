@@ -5,8 +5,7 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::Date32Type;
 use arrow_array::{Array, Date32Array};
 use arrow_schema::DataType;
-use datafusion_common::Result;
-use datafusion_common::exec_err;
+use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 
@@ -38,6 +37,35 @@ impl Default for Date32 {
     }
 }
 
+impl Date32 {
+    fn invoke_scalar_args(
+        &self,
+        min: Option<i32>,
+        max: Option<i32>,
+        number_rows: usize,
+    ) -> Result<ColumnarValue> {
+        let mut rng = rand::rng();
+        let mut values = Vec::with_capacity(number_rows);
+        for _ in 0..number_rows {
+            let (Some(min), Some(max)) = (min, max) else {
+                values.push(None);
+                continue;
+            };
+
+            if min > max {
+                return exec_err!(
+                    "{} requires min <= max, got min {min} and max {max}",
+                    self.name()
+                );
+            }
+
+            values.push(Some(rng.random_range(min..=max)));
+        }
+
+        Ok(ColumnarValue::Array(Arc::new(Date32Array::from(values))))
+    }
+}
+
 impl ScalarUDFImpl for Date32 {
     fn as_any(&self) -> &dyn Any {
         self
@@ -59,8 +87,17 @@ impl ScalarUDFImpl for Date32 {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
+        let [min, max] = crate::randgen::utils::exact_args(args, self.name())?;
+        if let (
+            ColumnarValue::Scalar(ScalarValue::Date32(min)),
+            ColumnarValue::Scalar(ScalarValue::Date32(max)),
+        ) = (&min, &max)
+        {
+            return self.invoke_scalar_args(*min, *max, number_rows);
+        }
+
         let (min_array, max_array) = two_array_args(
-            args,
+            vec![min, max],
             (DataType::Date32, "Date32 arguments"),
             (DataType::Date32, "Date32 arguments"),
             number_rows,
