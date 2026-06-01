@@ -46,35 +46,39 @@ impl Float64Uniform {
         number_rows: usize,
     ) -> Result<ColumnarValue> {
         let mut rng = rand::rng();
+        if let (Some(min), Some(max)) = (min, max) {
+            let mut values = Vec::with_capacity(number_rows);
+            for _ in 0..number_rows {
+                if !min.is_finite() || !max.is_finite() {
+                    return exec_err!("{} requires finite bounds", self.name());
+                }
+                if min > max {
+                    return exec_err!(
+                        "{} requires min <= max, got min {min} and max {max}",
+                        self.name()
+                    );
+                }
+                if !(max - min).is_finite() {
+                    return exec_err!(
+                        "{} requires finite distance between bounds, got min {min} and max {max}",
+                        self.name()
+                    );
+                }
+
+                let value = if min == max {
+                    min
+                } else {
+                    rng.random_range(min..=max)
+                };
+                values.push(value);
+            }
+
+            return Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))));
+        }
+
         let mut values = Vec::with_capacity(number_rows);
         for _ in 0..number_rows {
-            let (Some(min), Some(max)) = (min, max) else {
-                values.push(None);
-                continue;
-            };
-
-            if !min.is_finite() || !max.is_finite() {
-                return exec_err!("{} requires finite bounds", self.name());
-            }
-            if min > max {
-                return exec_err!(
-                    "{} requires min <= max, got min {min} and max {max}",
-                    self.name()
-                );
-            }
-            if !(max - min).is_finite() {
-                return exec_err!(
-                    "{} requires finite distance between bounds, got min {min} and max {max}",
-                    self.name()
-                );
-            }
-
-            let value = if min == max {
-                min
-            } else {
-                rng.random_range(min..=max)
-            };
-            values.push(Some(value));
+            values.push(None);
         }
 
         Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))))
@@ -118,6 +122,38 @@ impl ScalarUDFImpl for Float64Uniform {
         let max_values = max_array.as_primitive::<Float64Type>();
 
         let mut rng = rand::rng();
+        if min_values.null_count() == 0 && max_values.null_count() == 0 {
+            let mut values = Vec::with_capacity(number_rows);
+            for row in 0..number_rows {
+                let min = min_values.value(row);
+                let max = max_values.value(row);
+                if !min.is_finite() || !max.is_finite() {
+                    return exec_err!("{} requires finite bounds", self.name());
+                }
+                if min > max {
+                    return exec_err!(
+                        "{} requires min <= max, got min {min} and max {max}",
+                        self.name()
+                    );
+                }
+                if !(max - min).is_finite() {
+                    return exec_err!(
+                        "{} requires finite distance between bounds, got min {min} and max {max}",
+                        self.name()
+                    );
+                }
+
+                let value = if min == max {
+                    min
+                } else {
+                    rng.random_range(min..=max)
+                };
+                values.push(value);
+            }
+
+            return Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))));
+        }
+
         let mut values = Vec::with_capacity(number_rows);
         for row in 0..number_rows {
             if min_values.is_null(row) || max_values.is_null(row) {

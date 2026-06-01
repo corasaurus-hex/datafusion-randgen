@@ -47,26 +47,30 @@ impl Float64Normal {
         number_rows: usize,
     ) -> Result<ColumnarValue> {
         let mut rng = rand::rng();
+        if let (Some(mean), Some(stddev)) = (mean, stddev) {
+            let mut values = Vec::with_capacity(number_rows);
+            for _ in 0..number_rows {
+                if !mean.is_finite() || !stddev.is_finite() {
+                    return exec_err!("{} requires finite mean and stddev", self.name());
+                }
+                if stddev <= 0.0 {
+                    return exec_err!("{} requires stddev > 0", self.name());
+                }
+                let normal = Normal::new(mean, stddev).map_err(|error| {
+                    datafusion_common::DataFusionError::Execution(format!(
+                        "{} invalid normal distribution parameters: {error}",
+                        self.name()
+                    ))
+                })?;
+                values.push(rng.sample(normal));
+            }
+
+            return Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))));
+        }
+
         let mut values = Vec::with_capacity(number_rows);
         for _ in 0..number_rows {
-            let (Some(mean), Some(stddev)) = (mean, stddev) else {
-                values.push(None);
-                continue;
-            };
-
-            if !mean.is_finite() || !stddev.is_finite() {
-                return exec_err!("{} requires finite mean and stddev", self.name());
-            }
-            if stddev <= 0.0 {
-                return exec_err!("{} requires stddev > 0", self.name());
-            }
-            let normal = Normal::new(mean, stddev).map_err(|error| {
-                datafusion_common::DataFusionError::Execution(format!(
-                    "{} invalid normal distribution parameters: {error}",
-                    self.name()
-                ))
-            })?;
-            values.push(Some(rng.sample(normal)));
+            values.push(None);
         }
 
         Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))))
@@ -110,6 +114,29 @@ impl ScalarUDFImpl for Float64Normal {
         let stddev_values = stddev_array.as_primitive::<Float64Type>();
 
         let mut rng = rand::rng();
+        if mean_values.null_count() == 0 && stddev_values.null_count() == 0 {
+            let mut values = Vec::with_capacity(number_rows);
+            for row in 0..number_rows {
+                let mean = mean_values.value(row);
+                let stddev = stddev_values.value(row);
+                if !mean.is_finite() || !stddev.is_finite() {
+                    return exec_err!("{} requires finite mean and stddev", self.name());
+                }
+                if stddev <= 0.0 {
+                    return exec_err!("{} requires stddev > 0", self.name());
+                }
+                let normal = Normal::new(mean, stddev).map_err(|error| {
+                    datafusion_common::DataFusionError::Execution(format!(
+                        "{} invalid normal distribution parameters: {error}",
+                        self.name()
+                    ))
+                })?;
+                values.push(rng.sample(normal));
+            }
+
+            return Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))));
+        }
+
         let mut values = Vec::with_capacity(number_rows);
         for row in 0..number_rows {
             if mean_values.is_null(row) || stddev_values.is_null(row) {
