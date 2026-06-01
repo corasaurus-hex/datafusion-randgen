@@ -60,6 +60,30 @@ fn scalar_choice(values: &[&str]) -> ColumnarValue {
     )))
 }
 
+fn scalar_choice_int64(values: &[i64]) -> ColumnarValue {
+    let values = values
+        .iter()
+        .map(|value| ScalarValue::Int64(Some(*value)))
+        .collect::<Vec<_>>();
+
+    ColumnarValue::Scalar(ScalarValue::List(ScalarValue::new_list_nullable(
+        &values,
+        &DataType::Int64,
+    )))
+}
+
+fn scalar_choice_float64(values: &[f64]) -> ColumnarValue {
+    let values = values
+        .iter()
+        .map(|value| ScalarValue::Float64(Some(*value)))
+        .collect::<Vec<_>>();
+
+    ColumnarValue::Scalar(ScalarValue::List(ScalarValue::new_list_nullable(
+        &values,
+        &DataType::Float64,
+    )))
+}
+
 fn bench_udfs(c: &mut Criterion) {
     let mut group = c.benchmark_group("udfs");
     group.sample_size(100);
@@ -214,6 +238,26 @@ fn bench_udfs(c: &mut Criterion) {
             finish(choice.invoke_with_args(args(
                 vec![choice_values.clone()],
                 DataType::Utf8,
+                "randgen_choice",
+            )));
+        });
+    });
+    let choice_int64_values = scalar_choice_int64(&[10, 20, 30, 40, 50]);
+    group.bench_function(BenchmarkId::new("randgen_choice_int64", ROWS), |b| {
+        b.iter(|| {
+            finish(choice.invoke_with_args(args(
+                vec![choice_int64_values.clone()],
+                DataType::Int64,
+                "randgen_choice",
+            )));
+        });
+    });
+    let choice_float64_values = scalar_choice_float64(&[10.0, 20.0, 30.0, 40.0, 50.0]);
+    group.bench_function(BenchmarkId::new("randgen_choice_float64", ROWS), |b| {
+        b.iter(|| {
+            finish(choice.invoke_with_args(args(
+                vec![choice_float64_values.clone()],
+                DataType::Float64,
                 "randgen_choice",
             )));
         });

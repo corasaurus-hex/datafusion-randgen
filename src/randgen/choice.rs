@@ -3,7 +3,8 @@ use std::sync::{Arc, LazyLock};
 
 use arrow_array::builder::StringBuilder;
 use arrow_array::cast::AsArray;
-use arrow_array::{Array, ListArray, new_empty_array, new_null_array};
+use arrow_array::types::{Float64Type, Int64Type};
+use arrow_array::{Array, Float64Array, Int64Array, ListArray, new_empty_array, new_null_array};
 use arrow_schema::{DataType, Field};
 use datafusion_common::Result;
 use datafusion_common::{ScalarValue, exec_err, internal_err, plan_err};
@@ -55,6 +56,96 @@ fn choose_from_scalar_utf8_list(
     }
 
     Ok(ColumnarValue::Array(Arc::new(builder.finish())))
+}
+
+fn choose_from_scalar_int64_list(
+    choices: &ListArray,
+    number_rows: usize,
+    name: &str,
+) -> Result<ColumnarValue> {
+    if choices.len() != 1 {
+        return internal_err!("{name} scalar List value must contain exactly one row");
+    }
+    if choices.is_null(0) {
+        return Ok(ColumnarValue::Array(new_null_array(
+            &DataType::Int64,
+            number_rows,
+        )));
+    }
+
+    let row_choices = choices.value(0);
+    if row_choices.is_empty() {
+        return exec_err!("{name} requires at least one choice");
+    }
+
+    let row_choices = row_choices.as_primitive::<Int64Type>();
+    let mut rng = rand::rng();
+    if row_choices.null_count() == 0 {
+        let mut values = Vec::with_capacity(number_rows);
+        for _ in 0..number_rows {
+            let choice_index = rng.random_range(0..row_choices.len());
+            values.push(row_choices.value(choice_index));
+        }
+
+        return Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))));
+    }
+
+    let mut values = Vec::with_capacity(number_rows);
+    for _ in 0..number_rows {
+        let choice_index = rng.random_range(0..row_choices.len());
+        if row_choices.is_null(choice_index) {
+            values.push(None);
+        } else {
+            values.push(Some(row_choices.value(choice_index)));
+        }
+    }
+
+    Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))))
+}
+
+fn choose_from_scalar_float64_list(
+    choices: &ListArray,
+    number_rows: usize,
+    name: &str,
+) -> Result<ColumnarValue> {
+    if choices.len() != 1 {
+        return internal_err!("{name} scalar List value must contain exactly one row");
+    }
+    if choices.is_null(0) {
+        return Ok(ColumnarValue::Array(new_null_array(
+            &DataType::Float64,
+            number_rows,
+        )));
+    }
+
+    let row_choices = choices.value(0);
+    if row_choices.is_empty() {
+        return exec_err!("{name} requires at least one choice");
+    }
+
+    let row_choices = row_choices.as_primitive::<Float64Type>();
+    let mut rng = rand::rng();
+    if row_choices.null_count() == 0 {
+        let mut values = Vec::with_capacity(number_rows);
+        for _ in 0..number_rows {
+            let choice_index = rng.random_range(0..row_choices.len());
+            values.push(row_choices.value(choice_index));
+        }
+
+        return Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))));
+    }
+
+    let mut values = Vec::with_capacity(number_rows);
+    for _ in 0..number_rows {
+        let choice_index = rng.random_range(0..row_choices.len());
+        if row_choices.is_null(choice_index) {
+            values.push(None);
+        } else {
+            values.push(Some(row_choices.value(choice_index)));
+        }
+    }
+
+    Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))))
 }
 
 impl Choice {
@@ -121,7 +212,10 @@ impl ScalarUDFImpl for Choice {
             )));
         }
         if let ColumnarValue::Scalar(ScalarValue::List(list)) = &choices {
-            if matches!(return_field.data_type(), DataType::Utf8) {
+            if matches!(
+                return_field.data_type(),
+                DataType::Utf8 | DataType::Int64 | DataType::Float64
+            ) {
                 let DataType::List(item_field) = list.data_type() else {
                     return internal_err!("{} expects a List argument", self.name());
                 };
@@ -131,7 +225,16 @@ impl ScalarUDFImpl for Choice {
                         self.name()
                     );
                 }
-                return choose_from_scalar_utf8_list(list, number_rows, self.name());
+                return match return_field.data_type() {
+                    DataType::Utf8 => choose_from_scalar_utf8_list(list, number_rows, self.name()),
+                    DataType::Int64 => {
+                        choose_from_scalar_int64_list(list, number_rows, self.name())
+                    }
+                    DataType::Float64 => {
+                        choose_from_scalar_float64_list(list, number_rows, self.name())
+                    }
+                    _ => unreachable!("matches! limits choice scalar specializations"),
+                };
             }
         }
 
