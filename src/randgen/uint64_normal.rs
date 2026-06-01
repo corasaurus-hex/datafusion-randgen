@@ -1,9 +1,9 @@
 //! UInt64 normal-distribution random generator.
 //!
-//! `randgen_uint64_normal(mean, stddev)` samples in floating-point normal
-//! space, rounds to the nearest integer, and clamps to the `UInt64` range. The
-//! mean is `UInt64`; `stddev` is `Float64` and must be finite and greater than
-//! zero. Null input yields null output for that row.
+//! `randgen_uint64_normal(mean, stddev)` samples a standard-normal z-score,
+//! scales it by `stddev`, rounds the offset to the nearest integer, and adds it
+//! to the `UInt64` mean with saturation. Null input yields null output for that
+//! row.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -12,10 +12,10 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::{Float64Type, UInt64Type};
 use arrow_array::{Array, UInt64Array};
 use arrow_schema::DataType;
-use datafusion_common::{DataFusionError, Result, ScalarValue, exec_err};
+use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
-use rand_distr::Normal;
+use rand_distr::StandardNormal;
 
 use crate::randgen::utils::two_array_args;
 
@@ -32,7 +32,9 @@ static UINT64_NORMAL_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
     )
 });
 
-fn normal_distribution(mean: u64, stddev: f64, name: &str) -> Result<Normal<f64>> {
+const U64_MAX_U128: u128 = u64::MAX as u128;
+
+fn validate_stddev(stddev: f64, name: &str) -> Result<()> {
     if !stddev.is_finite() {
         return exec_err!("{name} requires finite stddev");
     }
@@ -40,23 +42,35 @@ fn normal_distribution(mean: u64, stddev: f64, name: &str) -> Result<Normal<f64>
         return exec_err!("{name} requires stddev > 0");
     }
 
-    Normal::new(mean as f64, stddev).map_err(|error| {
-        DataFusionError::Execution(format!(
-            "{name} invalid normal distribution parameters: {error}"
-        ))
-    })
+    Ok(())
 }
 
-fn sample_uint64<R: Rng + ?Sized>(rng: &mut R, normal: Normal<f64>) -> u64 {
-    let value: f64 = rng.sample(normal);
-    let value = value.round();
-    if value <= 0.0 {
-        0
-    } else if value >= u64::MAX as f64 {
-        u64::MAX
+fn offset_magnitude(offset: f64) -> u128 {
+    if !offset.is_finite() || offset >= u128::MAX as f64 {
+        u128::MAX
     } else {
-        value as u64
+        offset as u128
     }
+}
+
+fn apply_uint64_offset(mean: u64, offset: f64) -> u64 {
+    if offset.is_nan() {
+        return mean;
+    }
+
+    let mean = mean as u128;
+    let value = if offset.is_sign_negative() {
+        mean.saturating_sub(offset_magnitude(-offset))
+    } else {
+        mean.saturating_add(offset_magnitude(offset))
+    };
+
+    value.min(U64_MAX_U128) as u64
+}
+
+fn sample_uint64<R: Rng + ?Sized>(rng: &mut R, mean: u64, stddev: f64) -> u64 {
+    let z: f64 = rng.sample(StandardNormal);
+    apply_uint64_offset(mean, (z * stddev).round())
 }
 
 impl UInt64Normal {
@@ -83,10 +97,10 @@ impl UInt64Normal {
     ) -> Result<ColumnarValue> {
         let mut rng = rand::rng();
         if let (Some(mean), Some(stddev)) = (mean, stddev) {
-            let normal = normal_distribution(mean, stddev, self.name())?;
+            validate_stddev(stddev, self.name())?;
             let mut values = Vec::with_capacity(number_rows);
             for _ in 0..number_rows {
-                values.push(sample_uint64(&mut rng, normal));
+                values.push(sample_uint64(&mut rng, mean, stddev));
             }
 
             return Ok(ColumnarValue::Array(Arc::new(UInt64Array::from(values))));
@@ -141,12 +155,10 @@ impl ScalarUDFImpl for UInt64Normal {
         if mean_values.null_count() == 0 && stddev_values.null_count() == 0 {
             let mut values = Vec::with_capacity(number_rows);
             for row in 0..number_rows {
-                let normal = normal_distribution(
-                    mean_values.value(row),
-                    stddev_values.value(row),
-                    self.name(),
-                )?;
-                values.push(sample_uint64(&mut rng, normal));
+                let mean = mean_values.value(row);
+                let stddev = stddev_values.value(row);
+                validate_stddev(stddev, self.name())?;
+                values.push(sample_uint64(&mut rng, mean, stddev));
             }
 
             return Ok(ColumnarValue::Array(Arc::new(UInt64Array::from(values))));
@@ -159,12 +171,10 @@ impl ScalarUDFImpl for UInt64Normal {
                 continue;
             }
 
-            let normal = normal_distribution(
-                mean_values.value(row),
-                stddev_values.value(row),
-                self.name(),
-            )?;
-            values.push(Some(sample_uint64(&mut rng, normal)));
+            let mean = mean_values.value(row);
+            let stddev = stddev_values.value(row);
+            validate_stddev(stddev, self.name())?;
+            values.push(Some(sample_uint64(&mut rng, mean, stddev)));
         }
 
         Ok(ColumnarValue::Array(Arc::new(UInt64Array::from(values))))
@@ -180,6 +190,15 @@ mod tests {
     use crate::randgen::test_helpers::querying::{query_result, query_to_values};
 
     use super::*;
+
+    #[test]
+    fn uint64_normal_offsets_preserve_large_integer_means() {
+        assert_eq!(apply_uint64_offset(u64::MAX - 2, 0.0), u64::MAX - 2);
+        assert_eq!(apply_uint64_offset(u64::MAX - 2, 10.0), u64::MAX);
+        assert_eq!(apply_uint64_offset(2, -10.0), 0);
+        assert_eq!(apply_uint64_offset(10, 4.0), 14);
+        assert_eq!(apply_uint64_offset(10, -4.0), 6);
+    }
 
     #[tokio::test]
     async fn uint64_normal_outputs_values() {

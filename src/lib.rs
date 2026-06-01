@@ -78,18 +78,18 @@ pub fn float64_normal_udf() -> ScalarUDF {
 
 /// Builds `randgen_int64_normal(mean, stddev)`.
 ///
-/// The UDF samples a normal distribution in floating-point space, rounds to the
-/// nearest integer, and clamps to the `Int64` range. The mean is `Int64`;
-/// `stddev` is `Float64` and must be finite and greater than zero.
+/// The UDF samples a standard-normal z-score, scales it by `stddev`, rounds the
+/// offset to the nearest integer, and adds it to the `Int64` mean with
+/// saturation. `stddev` must be finite and greater than zero.
 pub fn int64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(Int64Normal::new())
 }
 
 /// Builds `randgen_uint64_normal(mean, stddev)`.
 ///
-/// The UDF samples a normal distribution in floating-point space, rounds to the
-/// nearest integer, and clamps to the `UInt64` range. The mean is `UInt64`;
-/// `stddev` is `Float64` and must be finite and greater than zero.
+/// The UDF samples a standard-normal z-score, scales it by `stddev`, rounds the
+/// offset to the nearest integer, and adds it to the `UInt64` mean with
+/// saturation. `stddev` must be finite and greater than zero.
 pub fn uint64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(UInt64Normal::new())
 }
