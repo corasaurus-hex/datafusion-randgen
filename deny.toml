@@ -1,0 +1,4 @@
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "Transitive DataFusion 53.1.0 dependency; latest DataFusion still depends on paste and the advisory lists no safe upgrade." },
+]
