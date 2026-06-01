@@ -26,8 +26,11 @@ pub use crate::randgen::choice::Choice;
 pub use crate::randgen::date32::Date32;
 pub use crate::randgen::float64_normal::Float64Normal;
 pub use crate::randgen::float64_uniform::Float64Uniform;
+pub use crate::randgen::int64_normal::Int64Normal;
 pub use crate::randgen::int64_uniform::Int64Uniform;
 pub use crate::randgen::timestamp_millisecond::TimestampMillisecond;
+pub use crate::randgen::uint64_normal::UInt64Normal;
+pub use crate::randgen::uint64_uniform::UInt64Uniform;
 pub use crate::randgen::utf8::Utf8;
 
 /// Implementation modules for the exported random generator UDFs.
@@ -46,6 +49,16 @@ pub fn int64_uniform_udf() -> ScalarUDF {
     ScalarUDF::from(Int64Uniform::new())
 }
 
+/// Builds `randgen_uint64_uniform(min, max)`.
+///
+/// The UDF returns a `UInt64` sampled from the inclusive range `min..=max`.
+/// This covers the full `UInt64` domain, including values that cannot be
+/// represented by `Int64`. Null bounds produce null output for that row.
+/// Non-null bounds must satisfy `min <= max`.
+pub fn uint64_uniform_udf() -> ScalarUDF {
+    ScalarUDF::from(UInt64Uniform::new())
+}
+
 /// Builds `randgen_float64_uniform(min, max)`.
 ///
 /// The UDF returns a `Float64` sampled from the inclusive range `min..=max`.
@@ -61,6 +74,24 @@ pub fn float64_uniform_udf() -> ScalarUDF {
 /// must be finite and `stddev` must be greater than zero.
 pub fn float64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(Float64Normal::new())
+}
+
+/// Builds `randgen_int64_normal(mean, stddev)`.
+///
+/// The UDF samples a normal distribution in floating-point space, rounds to the
+/// nearest integer, and clamps to the `Int64` range. The mean is `Int64`;
+/// `stddev` is `Float64` and must be finite and greater than zero.
+pub fn int64_normal_udf() -> ScalarUDF {
+    ScalarUDF::from(Int64Normal::new())
+}
+
+/// Builds `randgen_uint64_normal(mean, stddev)`.
+///
+/// The UDF samples a normal distribution in floating-point space, rounds to the
+/// nearest integer, and clamps to the `UInt64` range. The mean is `UInt64`;
+/// `stddev` is `Float64` and must be finite and greater than zero.
+pub fn uint64_normal_udf() -> ScalarUDF {
+    ScalarUDF::from(UInt64Normal::new())
 }
 
 /// Builds `randgen_bool(probability)`.
@@ -111,8 +142,11 @@ pub fn timestamp_millisecond_udf() -> ScalarUDF {
 pub fn all_udfs() -> Vec<ScalarUDF> {
     vec![
         int64_uniform_udf(),
+        uint64_uniform_udf(),
         float64_uniform_udf(),
         float64_normal_udf(),
+        int64_normal_udf(),
+        uint64_normal_udf(),
         bool_udf(),
         utf8_udf(),
         choice_udf(),

@@ -16,8 +16,11 @@ async fn all_udfs_registers_all_generators() {
     query_succeeds(
         "SELECT \
             randgen_int64_uniform(1, 1), \
+            randgen_uint64_uniform(arrow_cast(1, 'UInt64'), arrow_cast(1, 'UInt64')), \
             randgen_float64_uniform(1.0, 1.0), \
             randgen_float64_normal(0.0, 1.0), \
+            randgen_int64_normal(0, 1.0), \
+            randgen_uint64_normal(arrow_cast(0, 'UInt64'), 1.0), \
             randgen_bool(1.0), \
             randgen_utf8('A', 1, 1), \
             randgen_choice(['UTC']), \

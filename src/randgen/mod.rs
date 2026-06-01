@@ -15,10 +15,16 @@ pub mod date32;
 pub mod float64_normal;
 /// Implementation for `randgen_float64_uniform`.
 pub mod float64_uniform;
+/// Implementation for `randgen_int64_normal`.
+pub mod int64_normal;
 /// Implementation for `randgen_int64_uniform`.
 pub mod int64_uniform;
 /// Implementation for `randgen_timestamp_millisecond`.
 pub mod timestamp_millisecond;
+/// Implementation for `randgen_uint64_normal`.
+pub mod uint64_normal;
+/// Implementation for `randgen_uint64_uniform`.
+pub mod uint64_uniform;
 /// Implementation for `randgen_utf8`.
 pub mod utf8;
 pub(crate) mod utils;
