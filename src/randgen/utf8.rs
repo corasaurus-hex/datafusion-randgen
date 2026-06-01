@@ -1,7 +1,7 @@
 use std::any::Any;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::sync::{Arc, LazyLock};
 
 use arrow_array::cast::AsArray;
 use arrow_array::types::Int64Type;
@@ -15,10 +15,6 @@ use rand::Rng;
 use crate::randgen::utils::three_array_args;
 
 const MAX_UTF8_ARRAY_BYTES: i64 = i32::MAX as i64;
-const ALPHABET_CACHE_CAPACITY: usize = 1024;
-
-static ALPHABET_CACHE: LazyLock<Mutex<AlphabetCache>> =
-    LazyLock::new(|| Mutex::new(AlphabetCache::default()));
 
 #[derive(Debug)]
 struct Alphabet {
@@ -31,59 +27,6 @@ struct RowSpec {
     alphabet: Arc<Alphabet>,
     min_length: i64,
     max_length: i64,
-}
-
-#[derive(Debug, Default)]
-struct AlphabetCache {
-    entries: HashMap<String, Arc<Alphabet>>,
-    order: VecDeque<String>,
-}
-
-impl AlphabetCache {
-    fn get(&mut self, characters: &str) -> Option<Arc<Alphabet>> {
-        let alphabet = self.entries.get(characters).cloned()?;
-        self.order
-            .retain(|cached_characters| cached_characters != characters);
-        self.order.push_back(characters.to_owned());
-        Some(alphabet)
-    }
-
-    fn insert(&mut self, characters: String, alphabet: Arc<Alphabet>) -> Arc<Alphabet> {
-        self.order
-            .retain(|cached_characters| cached_characters != &characters);
-        self.entries
-            .insert(characters.clone(), Arc::clone(&alphabet));
-        self.order.push_back(characters);
-
-        while self.entries.len() > ALPHABET_CACHE_CAPACITY {
-            let Some(stale_characters) = self.order.pop_front() else {
-                break;
-            };
-            self.entries.remove(&stale_characters);
-        }
-
-        alphabet
-    }
-}
-
-fn alphabet_cache(name: &str) -> Result<MutexGuard<'static, AlphabetCache>> {
-    ALPHABET_CACHE.lock().map_err(|_| {
-        DataFusionError::Execution(format!("{name} failed to lock the alphabet cache"))
-    })
-}
-
-fn cached_alphabet(characters: &str, name: &str) -> Result<Arc<Alphabet>> {
-    if let Some(alphabet) = alphabet_cache(name)?.get(characters) {
-        return Ok(alphabet);
-    }
-
-    let alphabet = parse_alphabet(characters, name)?;
-    let mut cache = alphabet_cache(name)?;
-    if let Some(alphabet) = cache.get(characters) {
-        return Ok(alphabet);
-    }
-
-    Ok(cache.insert(characters.to_owned(), alphabet))
 }
 
 fn parse_alphabet(characters: &str, name: &str) -> Result<Arc<Alphabet>> {
@@ -155,7 +98,7 @@ impl Utf8 {
             return Ok(ColumnarValue::Array(Arc::new(builder.finish())));
         };
 
-        let alphabet = cached_alphabet(characters, self.name())?;
+        let alphabet = parse_alphabet(characters, self.name())?;
         let mut total_max_bytes = 0_i64;
         for _ in 0..number_rows {
             if min_length < 0 || max_length < 0 || min_length > max_length {
@@ -271,7 +214,7 @@ impl ScalarUDFImpl for Utf8 {
             let alphabet = match local_alphabets.get(characters) {
                 Some(alphabet) => Arc::clone(alphabet),
                 None => {
-                    let alphabet = cached_alphabet(characters, self.name())?;
+                    let alphabet = parse_alphabet(characters, self.name())?;
                     local_alphabets.insert(characters, Arc::clone(&alphabet));
                     alphabet
                 }
