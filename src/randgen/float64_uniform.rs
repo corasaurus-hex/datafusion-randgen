@@ -47,24 +47,24 @@ impl Float64Uniform {
     ) -> Result<ColumnarValue> {
         let mut rng = rand::rng();
         if let (Some(min), Some(max)) = (min, max) {
+            if !min.is_finite() || !max.is_finite() {
+                return exec_err!("{} requires finite bounds", self.name());
+            }
+            if min > max {
+                return exec_err!(
+                    "{} requires min <= max, got min {min} and max {max}",
+                    self.name()
+                );
+            }
+            if !(max - min).is_finite() {
+                return exec_err!(
+                    "{} requires finite distance between bounds, got min {min} and max {max}",
+                    self.name()
+                );
+            }
+
             let mut values = Vec::with_capacity(number_rows);
             for _ in 0..number_rows {
-                if !min.is_finite() || !max.is_finite() {
-                    return exec_err!("{} requires finite bounds", self.name());
-                }
-                if min > max {
-                    return exec_err!(
-                        "{} requires min <= max, got min {min} and max {max}",
-                        self.name()
-                    );
-                }
-                if !(max - min).is_finite() {
-                    return exec_err!(
-                        "{} requires finite distance between bounds, got min {min} and max {max}",
-                        self.name()
-                    );
-                }
-
                 let value = if min == max {
                     min
                 } else {
