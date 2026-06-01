@@ -38,16 +38,16 @@ When any required argument is null, the output for that row is null. Invalid
 parameters return DataFusion errors instead of silently clamping or swapping
 values.
 
-| Function | Arguments | Returns | Rules |
-| --- | --- | --- | --- |
-| `randgen_int64_uniform` | `min Int64, max Int64` | `Int64` | Requires `min <= max`; samples from `min..=max`. |
-| `randgen_float64_uniform` | `min Float64, max Float64` | `Float64` | Requires finite bounds, finite span, and `min <= max`. |
-| `randgen_float64_normal` | `mean Float64, stddev Float64` | `Float64` | Requires finite arguments and `stddev > 0`. |
-| `randgen_bool` | `probability Float64` | `Boolean` | Requires a finite probability in `0.0..=1.0`. |
-| `randgen_utf8` | `characters Utf8, min_length Int64, max_length Int64` | `Utf8` | Uses the distinct characters from `characters`; requires `0 <= min_length <= max_length`. |
-| `randgen_choice` | `choices List<T>` | `T` | Samples one element from a non-empty list for each row. |
-| `randgen_date32` | `min Date32, max Date32` | `Date32` | Requires `min <= max`; samples from the inclusive day range. |
-| `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)` | `Timestamp(Millisecond)` | Requires matching timestamp timezones and `min <= max`. |
+| Function                        | Arguments                                                | Returns                  | Rules                                                                                     |
+| ------------------------------- | -------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------- |
+| `randgen_int64_uniform`         | `min Int64, max Int64`                                   | `Int64`                  | Requires `min <= max`; samples from `min..=max`.                                          |
+| `randgen_float64_uniform`       | `min Float64, max Float64`                               | `Float64`                | Requires finite bounds, finite span, and `min <= max`.                                    |
+| `randgen_float64_normal`        | `mean Float64, stddev Float64`                           | `Float64`                | Requires finite arguments and `stddev > 0`.                                               |
+| `randgen_bool`                  | `probability Float64`                                    | `Boolean`                | Requires a finite probability in `0.0..=1.0`.                                             |
+| `randgen_utf8`                  | `characters Utf8, min_length Int64, max_length Int64`    | `Utf8`                   | Uses the distinct characters from `characters`; requires `0 <= min_length <= max_length`. |
+| `randgen_choice`                | `choices List<T>`                                        | `T`                      | Samples one element from a non-empty list for each row.                                   |
+| `randgen_date32`                | `min Date32, max Date32`                                 | `Date32`                 | Requires `min <= max`; samples from the inclusive day range.                              |
+| `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)` | `Timestamp(Millisecond)` | Requires matching timestamp timezones and `min <= max`.                                   |
 
 ## Examples
 
