@@ -1,3 +1,5 @@
+//! Int64 uniform random generator UDF implementation.
+
 use std::any::Any;
 
 use arrow_array::cast::AsArray;
@@ -12,6 +14,7 @@ use std::sync::{Arc, LazyLock};
 use crate::randgen::utils::two_array_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Implements `randgen_int64_uniform(min, max)`.
 pub struct Int64Uniform {
     signature: &'static Signature,
 }
@@ -21,6 +24,7 @@ static INT64_UNIFORM_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
 });
 
 impl Int64Uniform {
+    /// Creates a `randgen_int64_uniform` UDF implementation.
     pub fn new() -> Self {
         Self {
             signature: &INT64_UNIFORM_SIGNATURE,

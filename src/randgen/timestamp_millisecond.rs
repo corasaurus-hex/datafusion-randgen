@@ -1,3 +1,5 @@
+//! Timestamp millisecond random generator UDF implementation.
+
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
@@ -16,6 +18,7 @@ use rand::Rng;
 use crate::randgen::utils::exact_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Implements `randgen_timestamp_millisecond(min, max)`.
 pub struct TimestampMillisecond {
     signature: &'static Signature,
 }
@@ -64,6 +67,7 @@ fn timestamp_millisecond_type(
 }
 
 impl TimestampMillisecond {
+    /// Creates a `randgen_timestamp_millisecond` UDF implementation.
     pub fn new() -> Self {
         Self {
             signature: &TIMESTAMP_MILLISECOND_SIGNATURE,

@@ -1,3 +1,5 @@
+//! Utf8 random generator UDF implementation.
+
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -55,6 +57,7 @@ fn parse_alphabet(characters: &str, name: &str) -> Result<Arc<Alphabet>> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Implements `randgen_utf8(characters, min_length, max_length)`.
 pub struct Utf8 {
     signature: &'static Signature,
 }
@@ -67,6 +70,7 @@ static UTF8_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
 });
 
 impl Utf8 {
+    /// Creates a `randgen_utf8` UDF implementation.
     pub fn new() -> Self {
         Self {
             signature: &UTF8_SIGNATURE,

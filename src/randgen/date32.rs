@@ -1,3 +1,5 @@
+//! Date32 random generator UDF implementation.
+
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
@@ -12,6 +14,7 @@ use rand::Rng;
 use crate::randgen::utils::two_array_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Implements `randgen_date32(min, max)`.
 pub struct Date32 {
     signature: &'static Signature,
 }
@@ -24,6 +27,7 @@ static DATE32_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
 });
 
 impl Date32 {
+    /// Creates a `randgen_date32` UDF implementation.
     pub fn new() -> Self {
         Self {
             signature: &DATE32_SIGNATURE,

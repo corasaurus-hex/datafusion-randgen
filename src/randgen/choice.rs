@@ -1,3 +1,5 @@
+//! List choice random generator UDF implementation.
+
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
@@ -16,6 +18,7 @@ use rand::Rng;
 use crate::randgen::utils::exact_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Implements `randgen_choice(choices)`.
 pub struct Choice {
     signature: &'static Signature,
 }
@@ -149,6 +152,7 @@ fn choose_from_scalar_float64_list(
 }
 
 impl Choice {
+    /// Creates a `randgen_choice` UDF implementation.
     pub fn new() -> Self {
         Self {
             signature: &CHOICE_SIGNATURE,
@@ -211,31 +215,26 @@ impl ScalarUDFImpl for Choice {
                 return_field.data_type(),
             )));
         }
-        if let ColumnarValue::Scalar(ScalarValue::List(list)) = &choices {
-            if matches!(
+        if let ColumnarValue::Scalar(ScalarValue::List(list)) = &choices
+            && matches!(
                 return_field.data_type(),
                 DataType::Utf8 | DataType::Int64 | DataType::Float64
-            ) {
-                let DataType::List(item_field) = list.data_type() else {
-                    return internal_err!("{} expects a List argument", self.name());
-                };
-                if item_field.data_type() != return_field.data_type() {
-                    return internal_err!(
-                        "{} return field does not match list item type",
-                        self.name()
-                    );
-                }
-                return match return_field.data_type() {
-                    DataType::Utf8 => choose_from_scalar_utf8_list(list, number_rows, self.name()),
-                    DataType::Int64 => {
-                        choose_from_scalar_int64_list(list, number_rows, self.name())
-                    }
-                    DataType::Float64 => {
-                        choose_from_scalar_float64_list(list, number_rows, self.name())
-                    }
-                    _ => unreachable!("matches! limits choice scalar specializations"),
-                };
+            )
+        {
+            let DataType::List(item_field) = list.data_type() else {
+                return internal_err!("{} expects a List argument", self.name());
+            };
+            if item_field.data_type() != return_field.data_type() {
+                return internal_err!("{} return field does not match list item type", self.name());
             }
+            return match return_field.data_type() {
+                DataType::Utf8 => choose_from_scalar_utf8_list(list, number_rows, self.name()),
+                DataType::Int64 => choose_from_scalar_int64_list(list, number_rows, self.name()),
+                DataType::Float64 => {
+                    choose_from_scalar_float64_list(list, number_rows, self.name())
+                }
+                _ => unreachable!("matches! limits choice scalar specializations"),
+            };
         }
 
         let choices = choices.into_array_of_size(number_rows)?;

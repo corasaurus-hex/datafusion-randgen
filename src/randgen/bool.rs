@@ -1,3 +1,5 @@
+//! Boolean random generator UDF implementation.
+
 use std::any::Any;
 use std::sync::LazyLock;
 
@@ -13,6 +15,7 @@ use std::sync::Arc;
 use crate::randgen::utils::one_array_arg;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Implements `randgen_bool(probability)`.
 pub struct Bool {
     signature: &'static Signature,
 }
@@ -21,6 +24,7 @@ static BOOL_SIGNATURE: LazyLock<Signature> =
     LazyLock::new(|| Signature::exact(vec![DataType::Float64], Volatility::Volatile));
 
 impl Bool {
+    /// Creates a `randgen_bool` UDF implementation.
     pub fn new() -> Self {
         Self {
             signature: &BOOL_SIGNATURE,
