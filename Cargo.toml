@@ -7,7 +7,7 @@ license = "MIT"
 keywords = ["datafusion", "random", "data", "generator"]
 repository = "https://github.com/corasaurus-hex/datafusion-randgen"
 readme = "README.md"
-exclude = ["Research Report.md"]
+exclude = ["benches/**", "tests/**"]
 rust-version = "1.89.0"
 
 [dependencies]

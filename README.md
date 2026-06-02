@@ -115,13 +115,17 @@ That runs:
 Release checks:
 
 ```bash
-cargo package --locked
 cargo publish --dry-run --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
-cargo deny check advisories
+cargo deny check
 cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 ```
 
-`deny.toml` contains a narrow advisory ignore for `paste`, which is currently
-pulled in by `datafusion 53.1.0`. Remove that ignore when DataFusion no longer
-depends on it.
+Use `cargo package --list --locked` when checking package contents. Benchmarks
+and integration tests are excluded from the published crate.
+
+`deny.toml` contains one narrow advisory ignore for `paste`, which is currently
+pulled in by `datafusion 53.1.0`. The advisory marks `paste` unmaintained and
+lists no safe upgrade. Remove that ignore when DataFusion no longer depends on
+it. Duplicate dependency versions are allowed to remain warnings unless they
+point to a concrete security or size problem.
