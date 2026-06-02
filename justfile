@@ -32,4 +32,13 @@ fmt:
 lint:
     cargo clippy --all-targets -- -D warnings
 
+stress:
+    RUST_BACKTRACE=1 cargo test --test public_udf_invariants stress_public_udfs_over_large_batches
+
+soak:
+    RUST_BACKTRACE=1 cargo test --test public_udf_invariants -- --ignored --nocapture
+
+coverage:
+    cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
 check: fmt-check type-check lint test

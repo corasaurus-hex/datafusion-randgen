@@ -2,9 +2,9 @@
 
 Random data generator UDFs for Apache DataFusion.
 
-The crate gives you `ScalarUDF` values. It doesn't take ownership of your
-`SessionContext`, and it doesn't register anything by side effect. Register the
-UDFs in the DataFusion application that owns the session.
+The crate gives you `ScalarUDF` values. It does not modify your `SessionContext` or
+register anything as a side effect. Register the UDFs yourself, in the
+DataFusion application that owns the session.
 
 ## Install
 
@@ -24,7 +24,7 @@ for udf in datafusion_randgen::all_udfs() {
 }
 ```
 
-Register individual UDFs when you only want part of the set:
+If you only want part of the set, register individual UDFs:
 
 ```rust
 ctx.register_udf(datafusion_randgen::int64_uniform_udf());
@@ -34,9 +34,8 @@ ctx.register_udf(datafusion_randgen::utf8_udf());
 ## UDFs
 
 All generators are volatile DataFusion scalar functions. Bounds are inclusive.
-When any required argument is null, the output for that row is null. Invalid
-parameters return DataFusion errors instead of silently clamping or swapping
-values.
+A null in any required argument means the output for that row is null. Invalid parameters
+return DataFusion errors. They do not silently clamp or swap values.
 
 | Function                        | Arguments                                                | Returns                  | Rules                                                                                     |
 | ------------------------------- | -------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------- |
@@ -52,21 +51,22 @@ values.
 | `randgen_date32`                | `min Date32, max Date32`                                 | `Date32`                 | Requires `min <= max`; samples from the inclusive day range.                              |
 | `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)` | `Timestamp(Millisecond)` | Requires matching timestamp timezones and `min <= max`.                                   |
 
-For integer normal generators, `min..=max` is a truncation bound, not an input
-used to calculate `stddev`. `mean` is the center of the unbounded distribution
-and may sit outside the output range. Small and moderate `stddev` values use
-rounded f64 normal offsets. Large `stddev` values add centered low-bit integer
-dither so f64 spacing doesn't leave regular integer gaps. Every integer in the
-requested range remains reachable.
+For the integer normal generators, `min..=max` is a truncation bound, not an input used to calculate `stddev`. `mean` centers the unbounded
+distribution and is allowed to sit outside the output range. Small and moderate
+`stddev` values use rounded f64 normal offsets. Large `stddev` values use
+centered low-bit integer dither so f64 spacing doesn't leave
+regular gaps between reachable integers. Every integer in the requested range
+remains reachable.
 
-The hybrid router estimates the probability that an unbounded draw will land in
-`min..=max`. High-acceptance calls stay on the f64 or dithered fast path. If the
-estimated acceptance probability drops below 5%, the sampler uses exact
-integer-domain proposals instead: bounded uniform rejection for small ranges
-near the center and a discrete exponential proposal for one-sided tails. When
-f64 rounding can't represent the required integer domain exactly, full-range and
-high-mass calls use Karney-style discrete normal sampling. A single-value range
-returns that value, which is the correct truncated distribution.
+The hybrid router estimates the probability that an unbounded draw lands inside
+`min..=max`. High-acceptance calls stay on the f64 or dithered fast path. When
+the estimated acceptance probability drops below 5%, the sampler switches to
+exact integer-domain proposals: bounded uniform rejection for small ranges near
+the center, and a discrete exponential proposal for one-sided tails. If f64
+rounding can't represent the required integer domain exactly, full-range and
+high-mass calls fall back to Karney-style discrete normal sampling. A
+single-value range returns that value, which is the correct truncated
+distribution.
 
 ## Examples
 
@@ -112,23 +112,31 @@ That runs:
 - `cargo clippy --all-targets -- -D warnings`
 - `cargo nextest run --all-targets`
 
+The integration suite covers property tests for every public UDF, plus a
+bounded stress test over larger batches. A longer soak pass is opt-in:
+
+```bash
+just soak
+RANDGEN_SOAK_ITERATIONS=100 RANDGEN_SOAK_ROWS=16384 just soak
+```
+
 Release checks:
 
 ```bash
 cargo publish --dry-run --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 cargo deny check
-cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+just coverage
 ```
 
-Use `cargo package --list --locked` when checking package contents. Benchmarks
-and integration tests are excluded from the published crate.
+Use `cargo package --list --locked` to check package contents. Benchmarks and
+integration tests are excluded from the published crate.
 
 `deny.toml` contains one narrow advisory ignore for `paste`, which is currently
-pulled in by `datafusion 53.1.0`. The advisory marks `paste` unmaintained and
-lists no safe upgrade. Remove that ignore when DataFusion no longer depends on
-it. Duplicate dependency versions are allowed to remain warnings unless they
-point to a concrete security or size problem.
+pulled in by `datafusion 53.1.0`. The advisory marks `paste` unmaintained
+and lists no safe upgrade. Drop the ignore once DataFusion stops depending on
+it. Duplicate dependency versions remain warnings unless they point to a real
+security or size problem.
 
 ## License
 
