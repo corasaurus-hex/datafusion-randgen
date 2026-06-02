@@ -129,3 +129,8 @@ pulled in by `datafusion 53.1.0`. The advisory marks `paste` unmaintained and
 lists no safe upgrade. Remove that ignore when DataFusion no longer depends on
 it. Duplicate dependency versions are allowed to remain warnings unless they
 point to a concrete security or size problem.
+
+## License
+
+Licensed under either of Apache License, Version 2.0 or MIT license at your
+option.
