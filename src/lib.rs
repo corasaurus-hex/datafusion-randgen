@@ -76,20 +76,32 @@ pub fn float64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(Float64Normal::new())
 }
 
-/// Builds `randgen_int64_normal(mean, stddev)`.
+/// Builds `randgen_int64_normal(min, max, mean, stddev)`.
 ///
-/// The UDF samples a standard-normal z-score, scales it by `stddev`, rounds the
-/// offset to the nearest integer, and adds it to the `Int64` mean with
-/// saturation. `stddev` must be finite and greater than zero.
+/// The UDF returns an `Int64` in the inclusive range `min..=max`. `stddev` is
+/// supplied by the caller; the range is a truncation bound, not an input used to
+/// calculate standard deviation, and `mean` may be outside the range. Large
+/// `stddev` values use centered low-bit integer dither so f64 spacing does not
+/// leave regular integer gaps. The sampler estimates truncation acceptance:
+/// high-acceptance calls stay on the fast path, while low-acceptance bounded
+/// and tail calls use exact integer-domain proposals. Exact fallbacks also
+/// cover ranges that f64 rounding cannot represent safely. `min <= max`, and
+/// `stddev` must be finite and greater than zero.
 pub fn int64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(Int64Normal::new())
 }
 
-/// Builds `randgen_uint64_normal(mean, stddev)`.
+/// Builds `randgen_uint64_normal(min, max, mean, stddev)`.
 ///
-/// The UDF samples a standard-normal z-score, scales it by `stddev`, rounds the
-/// offset to the nearest integer, and adds it to the `UInt64` mean with
-/// saturation. `stddev` must be finite and greater than zero.
+/// The UDF returns a `UInt64` in the inclusive range `min..=max`. `stddev` is
+/// supplied by the caller; the range is a truncation bound, not an input used to
+/// calculate standard deviation, and `mean` may be outside the range. Large
+/// `stddev` values use centered low-bit integer dither so f64 spacing does not
+/// leave regular integer gaps. The sampler estimates truncation acceptance:
+/// high-acceptance calls stay on the fast path, while low-acceptance bounded
+/// and tail calls use exact integer-domain proposals. Exact fallbacks also
+/// cover ranges that f64 rounding cannot represent safely. `min <= max`, and
+/// `stddev` must be finite and greater than zero.
 pub fn uint64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(UInt64Normal::new())
 }

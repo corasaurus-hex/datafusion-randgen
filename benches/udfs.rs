@@ -202,13 +202,22 @@ fn bench_udfs(c: &mut Criterion) {
         },
     );
 
+    let int_normal_min = ColumnarValue::Array(array(Int64Array::from(vec![Some(0_i64); ROWS])));
+    let int_normal_max = ColumnarValue::Array(array(Int64Array::from(vec![Some(20_i64); ROWS])));
     let int_normal_mean = ColumnarValue::Array(array(Int64Array::from(vec![Some(10_i64); ROWS])));
+    let int_normal_min_scalar = ColumnarValue::Scalar(ScalarValue::Int64(Some(0)));
+    let int_normal_max_scalar = ColumnarValue::Scalar(ScalarValue::Int64(Some(20)));
     let int_normal_mean_scalar = ColumnarValue::Scalar(ScalarValue::Int64(Some(10)));
     let int64_normal = Int64Normal::new();
     group.bench_function(BenchmarkId::new("randgen_int64_normal", ROWS), |b| {
         b.iter(|| {
             finish(int64_normal.invoke_with_args(args(
-                vec![int_normal_mean.clone(), normal_stddev.clone()],
+                vec![
+                    int_normal_min.clone(),
+                    int_normal_max.clone(),
+                    int_normal_mean.clone(),
+                    normal_stddev.clone(),
+                ],
                 DataType::Int64,
                 "randgen_int64_normal",
             )));
@@ -219,7 +228,12 @@ fn bench_udfs(c: &mut Criterion) {
         |b| {
             b.iter(|| {
                 finish(int64_normal.invoke_with_args(args(
-                    vec![int_normal_mean_scalar.clone(), normal_stddev_scalar.clone()],
+                    vec![
+                        int_normal_min_scalar.clone(),
+                        int_normal_max_scalar.clone(),
+                        int_normal_mean_scalar.clone(),
+                        normal_stddev_scalar.clone(),
+                    ],
                     DataType::Int64,
                     "randgen_int64_normal",
                 )));
@@ -227,13 +241,22 @@ fn bench_udfs(c: &mut Criterion) {
         },
     );
 
+    let uint_normal_min = ColumnarValue::Array(array(UInt64Array::from(vec![Some(0_u64); ROWS])));
+    let uint_normal_max = ColumnarValue::Array(array(UInt64Array::from(vec![Some(20_u64); ROWS])));
     let uint_normal_mean = ColumnarValue::Array(array(UInt64Array::from(vec![Some(10_u64); ROWS])));
+    let uint_normal_min_scalar = ColumnarValue::Scalar(ScalarValue::UInt64(Some(0)));
+    let uint_normal_max_scalar = ColumnarValue::Scalar(ScalarValue::UInt64(Some(20)));
     let uint_normal_mean_scalar = ColumnarValue::Scalar(ScalarValue::UInt64(Some(10)));
     let uint64_normal = UInt64Normal::new();
     group.bench_function(BenchmarkId::new("randgen_uint64_normal", ROWS), |b| {
         b.iter(|| {
             finish(uint64_normal.invoke_with_args(args(
-                vec![uint_normal_mean.clone(), normal_stddev.clone()],
+                vec![
+                    uint_normal_min.clone(),
+                    uint_normal_max.clone(),
+                    uint_normal_mean.clone(),
+                    normal_stddev.clone(),
+                ],
                 DataType::UInt64,
                 "randgen_uint64_normal",
             )));
@@ -245,6 +268,8 @@ fn bench_udfs(c: &mut Criterion) {
             b.iter(|| {
                 finish(uint64_normal.invoke_with_args(args(
                     vec![
+                        uint_normal_min_scalar.clone(),
+                        uint_normal_max_scalar.clone(),
                         uint_normal_mean_scalar.clone(),
                         normal_stddev_scalar.clone(),
                     ],

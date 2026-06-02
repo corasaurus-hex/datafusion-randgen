@@ -19,6 +19,7 @@ pub mod float64_uniform;
 pub mod int64_normal;
 /// Implementation for `randgen_int64_uniform`.
 pub mod int64_uniform;
+pub(crate) mod integer_normal;
 /// Implementation for `randgen_timestamp_millisecond`.
 pub mod timestamp_millisecond;
 /// Implementation for `randgen_uint64_normal`.

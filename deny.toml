@@ -2,3 +2,15 @@
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "Transitive DataFusion 53.1.0 dependency; latest DataFusion still depends on paste and the advisory lists no safe upgrade." },
 ]
+
+[bans]
+multiple-versions = "allow"
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "CC0-1.0",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]

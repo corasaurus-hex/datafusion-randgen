@@ -77,3 +77,25 @@ pub(crate) fn three_array_args(
         array_arg(third_value, &third_type, number_rows, name, third_name)?,
     ))
 }
+
+pub(crate) fn four_array_args(
+    args: Vec<ColumnarValue>,
+    first: ExpectedArg,
+    second: ExpectedArg,
+    third: ExpectedArg,
+    fourth: ExpectedArg,
+    number_rows: usize,
+    name: &str,
+) -> Result<(ArrayRef, ArrayRef, ArrayRef, ArrayRef)> {
+    let [first_value, second_value, third_value, fourth_value] = exact_args(args, name)?;
+    let (first_type, first_name) = first;
+    let (second_type, second_name) = second;
+    let (third_type, third_name) = third;
+    let (fourth_type, fourth_name) = fourth;
+    Ok((
+        array_arg(first_value, &first_type, number_rows, name, first_name)?,
+        array_arg(second_value, &second_type, number_rows, name, second_name)?,
+        array_arg(third_value, &third_type, number_rows, name, third_name)?,
+        array_arg(fourth_value, &fourth_type, number_rows, name, fourth_name)?,
+    ))
+}

@@ -44,13 +44,29 @@ values.
 | `randgen_uint64_uniform`        | `min UInt64, max UInt64`                                 | `UInt64`                 | Requires `min <= max`; supports the full `UInt64` range.                                  |
 | `randgen_float64_uniform`       | `min Float64, max Float64`                               | `Float64`                | Requires finite bounds, finite span, and `min <= max`.                                    |
 | `randgen_float64_normal`        | `mean Float64, stddev Float64`                           | `Float64`                | Requires finite arguments and `stddev > 0`.                                               |
-| `randgen_int64_normal`          | `mean Int64, stddev Float64`                             | `Int64`                  | Samples a rounded normal offset and adds it to the mean with saturation.                  |
-| `randgen_uint64_normal`         | `mean UInt64, stddev Float64`                            | `UInt64`                 | Samples a rounded normal offset and adds it to the mean with saturation.                  |
+| `randgen_int64_normal`          | `min Int64, max Int64, mean Int64, stddev Float64`       | `Int64`                  | Requires `min <= max`; `stddev` is caller-supplied; large `stddev` uses low-bit dither.   |
+| `randgen_uint64_normal`         | `min UInt64, max UInt64, mean UInt64, stddev Float64`    | `UInt64`                 | Requires `min <= max`; `stddev` is caller-supplied; large `stddev` uses low-bit dither.   |
 | `randgen_bool`                  | `probability Float64`                                    | `Boolean`                | Requires a finite probability in `0.0..=1.0`.                                             |
 | `randgen_utf8`                  | `characters Utf8, min_length Int64, max_length Int64`    | `Utf8`                   | Uses the distinct characters from `characters`; requires `0 <= min_length <= max_length`. |
 | `randgen_choice`                | `choices List<T>`                                        | `T`                      | Samples one element from a non-empty list for each row.                                   |
 | `randgen_date32`                | `min Date32, max Date32`                                 | `Date32`                 | Requires `min <= max`; samples from the inclusive day range.                              |
 | `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)` | `Timestamp(Millisecond)` | Requires matching timestamp timezones and `min <= max`.                                   |
+
+For integer normal generators, `min..=max` is a truncation bound, not an input
+used to calculate `stddev`. `mean` is the center of the unbounded distribution
+and may sit outside the output range. Small and moderate `stddev` values use
+rounded f64 normal offsets. Large `stddev` values add centered low-bit integer
+dither so f64 spacing doesn't leave regular integer gaps. Every integer in the
+requested range remains reachable.
+
+The hybrid router estimates the probability that an unbounded draw will land in
+`min..=max`. High-acceptance calls stay on the f64 or dithered fast path. If the
+estimated acceptance probability drops below 5%, the sampler uses exact
+integer-domain proposals instead: bounded uniform rejection for small ranges
+near the center and a discrete exponential proposal for one-sided tails. When
+f64 rounding can't represent the required integer domain exactly, full-range and
+high-mass calls use Karney-style discrete normal sampling. A single-value range
+returns that value, which is the correct truncated distribution.
 
 ## Examples
 
@@ -61,7 +77,7 @@ FROM generate_series(1, 100);
 SELECT randgen_uint64_uniform(arrow_cast(0, 'UInt64'), arrow_cast(18446744073709551615, 'UInt64'))
 FROM generate_series(1, 100);
 
-SELECT randgen_int64_normal(100, 15.0)
+SELECT randgen_int64_normal(0, 200, 100, 15.0)
 FROM generate_series(1, 100);
 
 SELECT randgen_utf8('ABC123', 8, 16)
