@@ -195,10 +195,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn float64_normal_accepts_integer_literals() {
+        let values = query_to_values::<Float64Type>(
+            ScalarUDF::from(Float64Normal::new()),
+            "SELECT randgen_float64_normal(10, 2) FROM generate_series(1, 100)",
+            DataType::Float64,
+        )
+        .await;
+
+        assert!(values.iter().all(|value| value.is_some_and(f64::is_finite)));
+    }
+
+    #[tokio::test]
     async fn float64_normal_invalid_stddev_errors() {
         let result = query_result(
             ScalarUDF::from(Float64Normal::new()),
             "SELECT randgen_float64_normal(10.0, 0.0) FROM generate_series(1, 10)",
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn float64_normal_negative_stddev_errors() {
+        let result = query_result(
+            ScalarUDF::from(Float64Normal::new()),
+            "SELECT randgen_float64_normal(10.0, -1.0) FROM generate_series(1, 10)",
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn float64_normal_nonfinite_mean_errors() {
+        let result = query_result(
+            ScalarUDF::from(Float64Normal::new()),
+            "SELECT randgen_float64_normal(CAST('NaN' AS DOUBLE), 1.0) FROM generate_series(1, 10)",
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn float64_normal_nonfinite_stddev_errors() {
+        let result = query_result(
+            ScalarUDF::from(Float64Normal::new()),
+            "SELECT randgen_float64_normal(10.0, CAST('Infinity' AS DOUBLE)) FROM generate_series(1, 10)",
         )
         .await;
         assert!(result.is_err());

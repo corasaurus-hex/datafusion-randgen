@@ -178,6 +178,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bool_negative_probability_errors() {
+        let result = query_result(
+            ScalarUDF::from(Bool::new()),
+            "SELECT randgen_bool(-0.1) FROM generate_series(1, 10)",
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
     async fn bool_array_probability_propagates_nulls() {
         let values = query_to_bool_values(
             ScalarUDF::from(Bool::new()),

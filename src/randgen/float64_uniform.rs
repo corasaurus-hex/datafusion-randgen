@@ -236,10 +236,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn float64_uniform_accepts_integer_literals() {
+        let values = query_to_values::<Float64Type>(
+            ScalarUDF::from(Float64Uniform::new()),
+            "SELECT randgen_float64_uniform(1, 10) FROM generate_series(1, 100)",
+            DataType::Float64,
+        )
+        .await;
+
+        assert!(
+            values
+                .iter()
+                .all(|value| value.is_some_and(|value| (1.0..=10.0).contains(&value)))
+        );
+    }
+
+    #[tokio::test]
     async fn float64_uniform_invalid_range_errors() {
         let result = query_result(
             ScalarUDF::from(Float64Uniform::new()),
             "SELECT randgen_float64_uniform(10.0, 1.0) FROM generate_series(1, 10)",
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn float64_uniform_nonfinite_min_errors() {
+        let result = query_result(
+            ScalarUDF::from(Float64Uniform::new()),
+            "SELECT randgen_float64_uniform(CAST('NaN' AS DOUBLE), 1.0) FROM generate_series(1, 10)",
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn float64_uniform_nonfinite_max_errors() {
+        let result = query_result(
+            ScalarUDF::from(Float64Uniform::new()),
+            "SELECT randgen_float64_uniform(0.0, CAST('Infinity' AS DOUBLE)) FROM generate_series(1, 10)",
         )
         .await;
         assert!(result.is_err());

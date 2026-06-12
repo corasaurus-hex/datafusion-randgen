@@ -359,7 +359,17 @@ mod tests {
     async fn choice_empty_list_errors() {
         let result = query_result(
             ScalarUDF::from(Choice::new()),
-            "SELECT randgen_choice(arrow_cast([], 'List(Utf8)')) FROM generate_series(1, 10)",
+            "SELECT randgen_choice([]) FROM generate_series(1, 10)",
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn choice_non_list_argument_errors() {
+        let result = query_result(
+            ScalarUDF::from(Choice::new()),
+            "SELECT randgen_choice('UTC') FROM generate_series(1, 10)",
         )
         .await;
         assert!(result.is_err());

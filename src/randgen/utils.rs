@@ -1,6 +1,6 @@
 use arrow_array::ArrayRef;
 use arrow_schema::DataType;
-use datafusion_common::{Result, internal_err};
+use datafusion_common::{Result, exec_err, internal_err};
 use datafusion_expr::ColumnarValue;
 
 pub(crate) fn exact_args<const N: usize>(
@@ -98,4 +98,43 @@ pub(crate) fn four_array_args(
         array_arg(third_value, &third_type, number_rows, name, third_name)?,
         array_arg(fourth_value, &fourth_type, number_rows, name, fourth_name)?,
     ))
+}
+
+pub(crate) fn coerce_uint64_argument(data_type: &DataType, name: &str) -> Result<DataType> {
+    match data_type {
+        DataType::Null
+        | DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64 => Ok(DataType::UInt64),
+        DataType::Dictionary(_, value_type) => coerce_uint64_argument(value_type, name),
+        _ => exec_err!("{name} expects UInt64 or nonnegative signed integer arguments"),
+    }
+}
+
+pub(crate) fn coerce_float64_argument(data_type: &DataType, name: &str) -> Result<DataType> {
+    match data_type {
+        DataType::Null
+        | DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64
+        | DataType::Float16
+        | DataType::Float32
+        | DataType::Float64
+        | DataType::Decimal32(_, _)
+        | DataType::Decimal64(_, _)
+        | DataType::Decimal128(_, _)
+        | DataType::Decimal256(_, _) => Ok(DataType::Float64),
+        DataType::Dictionary(_, value_type) => coerce_float64_argument(value_type, name),
+        _ => exec_err!("{name} expects a Float64-compatible stddev argument"),
+    }
 }

@@ -53,8 +53,9 @@ pub fn int64_uniform_udf() -> ScalarUDF {
 ///
 /// The UDF returns a `UInt64` sampled from the inclusive range `min..=max`.
 /// This covers the full `UInt64` domain, including values that cannot be
-/// represented by `Int64`. Null bounds produce null output for that row.
-/// Non-null bounds must satisfy `min <= max`.
+/// represented by `Int64`. Arguments may be `UInt64` values or nonnegative
+/// signed integer values. Null bounds produce null output for that row. Non-null
+/// bounds must satisfy `min <= max`.
 pub fn uint64_uniform_udf() -> ScalarUDF {
     ScalarUDF::from(UInt64Uniform::new())
 }
@@ -92,10 +93,12 @@ pub fn int64_normal_udf() -> ScalarUDF {
 ///
 /// The UDF returns a `UInt64` in the inclusive range `min..=max`. `stddev` is
 /// supplied by the caller; the range is a truncation bound, not an input used to
-/// calculate standard deviation, and `mean` may be outside the range. Sampling
-/// uses a rounded f64 normal and retries values outside the truncation range.
-/// Very low-probability tail ranges can error after a bounded number of
-/// retries. `min <= max`, and `stddev` must be finite and greater than zero.
+/// calculate standard deviation, and `mean` may be outside the range.
+/// `min`, `max`, and `mean` may be `UInt64` values or nonnegative signed integer
+/// values. Sampling uses a rounded f64 normal and retries values outside the
+/// truncation range. Very low-probability tail ranges can error after a bounded
+/// number of retries. `min <= max`, and `stddev` must be finite and greater than
+/// zero.
 pub fn uint64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(UInt64Normal::new())
 }

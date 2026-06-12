@@ -2,7 +2,8 @@
 //!
 //! `randgen_uint64_uniform(min, max)` samples from the inclusive integer range
 //! `min..=max`. Null bounds produce null output for that row. Non-null bounds
-//! must satisfy `min <= max`.
+//! must satisfy `min <= max`. Arguments may be `UInt64` values or nonnegative
+//! signed integer values.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -15,7 +16,7 @@ use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 
-use crate::randgen::utils::two_array_args;
+use crate::randgen::utils::{coerce_uint64_argument, two_array_args};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// `ScalarUDFImpl` for `randgen_uint64_uniform(min, max)`.
@@ -23,12 +24,8 @@ pub struct UInt64Uniform {
     signature: &'static Signature,
 }
 
-static UINT64_UNIFORM_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
-    Signature::exact(
-        vec![DataType::UInt64, DataType::UInt64],
-        Volatility::Volatile,
-    )
-});
+static UINT64_UNIFORM_SIGNATURE: LazyLock<Signature> =
+    LazyLock::new(|| Signature::user_defined(Volatility::Volatile));
 
 impl UInt64Uniform {
     /// Creates the `randgen_uint64_uniform` implementation.
@@ -93,6 +90,26 @@ impl ScalarUDFImpl for UInt64Uniform {
 
     fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
         Ok(DataType::UInt64)
+    }
+
+    fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
+        if arg_types.len() != 2 {
+            let argument = if arg_types.len() == 1 {
+                "argument"
+            } else {
+                "arguments"
+            };
+            return exec_err!(
+                "{} expects exactly 2 arguments, got {} {argument}",
+                self.name(),
+                arg_types.len()
+            );
+        }
+
+        Ok(vec![
+            coerce_uint64_argument(&arg_types[0], self.name())?,
+            coerce_uint64_argument(&arg_types[1], self.name())?,
+        ])
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
@@ -174,7 +191,7 @@ mod tests {
     async fn uint64_uniform_values_stay_in_range() {
         for value in query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Uniform::new()),
-            "SELECT randgen_uint64_uniform(arrow_cast(1, 'UInt64'), arrow_cast(10, 'UInt64')) FROM generate_series(1, 100)",
+            "SELECT randgen_uint64_uniform(1, 10) FROM generate_series(1, 100)",
             DataType::UInt64,
         )
         .await
@@ -188,7 +205,7 @@ mod tests {
     async fn uint64_uniform_equal_bounds_are_deterministic() {
         let values = query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Uniform::new()),
-            "SELECT randgen_uint64_uniform(arrow_cast(18446744073709551615, 'UInt64'), arrow_cast(18446744073709551615, 'UInt64')) FROM generate_series(1, 10)",
+            "SELECT randgen_uint64_uniform(18446744073709551615, 18446744073709551615) FROM generate_series(1, 10)",
             DataType::UInt64,
         )
         .await;
@@ -200,7 +217,7 @@ mod tests {
     async fn uint64_uniform_full_range_smoke() {
         let values = query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Uniform::new()),
-            "SELECT randgen_uint64_uniform(arrow_cast(0, 'UInt64'), arrow_cast(18446744073709551615, 'UInt64')) FROM generate_series(1, 10)",
+            "SELECT randgen_uint64_uniform(0, 18446744073709551615) FROM generate_series(1, 10)",
             DataType::UInt64,
         )
         .await;
@@ -213,7 +230,40 @@ mod tests {
     async fn uint64_uniform_invalid_range_errors() {
         let result = query_result(
             ScalarUDF::from(UInt64Uniform::new()),
-            "SELECT randgen_uint64_uniform(arrow_cast(10, 'UInt64'), arrow_cast(1, 'UInt64')) FROM generate_series(1, 10)",
+            "SELECT randgen_uint64_uniform(10, 1) FROM generate_series(1, 10)",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn uint64_uniform_negative_min_literal_errors() {
+        let result = query_result(
+            ScalarUDF::from(UInt64Uniform::new()),
+            "SELECT randgen_uint64_uniform(-1, 10) FROM generate_series(1, 10)",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn uint64_uniform_negative_max_literal_errors() {
+        let result = query_result(
+            ScalarUDF::from(UInt64Uniform::new()),
+            "SELECT randgen_uint64_uniform(0, -1) FROM generate_series(1, 10)",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn uint64_uniform_negative_column_value_errors() {
+        let result = query_result(
+            ScalarUDF::from(UInt64Uniform::new()),
+            "SELECT randgen_uint64_uniform(min_value, max_value) FROM (VALUES (0, 10), (0, -1)) AS t(min_value, max_value)",
         )
         .await;
 
@@ -224,7 +274,7 @@ mod tests {
     async fn uint64_uniform_array_bounds_propagate_nulls() {
         let values = query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Uniform::new()),
-            "SELECT randgen_uint64_uniform(min_value, max_value) FROM (VALUES (arrow_cast(7, 'UInt64'), arrow_cast(7, 'UInt64')), (arrow_cast(NULL, 'UInt64'), arrow_cast(9, 'UInt64')), (arrow_cast(1, 'UInt64'), arrow_cast(NULL, 'UInt64'))) AS t(min_value, max_value)",
+            "SELECT randgen_uint64_uniform(min_value, max_value) FROM (VALUES (7, 7), (NULL, 9), (1, NULL)) AS t(min_value, max_value)",
             DataType::UInt64,
         )
         .await;

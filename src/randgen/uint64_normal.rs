@@ -3,7 +3,8 @@
 //! `randgen_uint64_normal(min, max, mean, stddev)` samples an integer normal
 //! distribution centered on `mean` and truncated to the inclusive `UInt64`
 //! range `min..=max`. The mean may be outside the output range. Null input
-//! yields null output for that row.
+//! yields null output for that row. Integer arguments may be `UInt64` values or
+//! nonnegative signed integer values.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -12,12 +13,12 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::{Float64Type, UInt64Type};
 use arrow_array::{Array, UInt64Array};
 use arrow_schema::DataType;
-use datafusion_common::{Result, ScalarValue};
+use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 
 use crate::randgen::integer_normal::RoundedIntegerNormalSampler;
-use crate::randgen::utils::four_array_args;
+use crate::randgen::utils::{coerce_float64_argument, coerce_uint64_argument, four_array_args};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// `ScalarUDFImpl` for `randgen_uint64_normal(min, max, mean, stddev)`.
@@ -25,17 +26,8 @@ pub struct UInt64Normal {
     signature: &'static Signature,
 }
 
-static UINT64_NORMAL_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
-    Signature::exact(
-        vec![
-            DataType::UInt64,
-            DataType::UInt64,
-            DataType::UInt64,
-            DataType::Float64,
-        ],
-        Volatility::Volatile,
-    )
-});
+static UINT64_NORMAL_SIGNATURE: LazyLock<Signature> =
+    LazyLock::new(|| Signature::user_defined(Volatility::Volatile));
 
 fn sampler_for_range(
     min: u64,
@@ -112,6 +104,29 @@ impl ScalarUDFImpl for UInt64Normal {
     fn return_type(&self, _arg_types: &[DataType]) -> Result<DataType> {
         Ok(DataType::UInt64)
     }
+
+    fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
+        if arg_types.len() != 4 {
+            let argument = if arg_types.len() == 1 {
+                "argument"
+            } else {
+                "arguments"
+            };
+            return exec_err!(
+                "{} expects exactly 4 arguments, got {} {argument}",
+                self.name(),
+                arg_types.len()
+            );
+        }
+
+        Ok(vec![
+            coerce_uint64_argument(&arg_types[0], self.name())?,
+            coerce_uint64_argument(&arg_types[1], self.name())?,
+            coerce_uint64_argument(&arg_types[2], self.name())?,
+            coerce_float64_argument(&arg_types[3], self.name())?,
+        ])
+    }
+
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         let ScalarFunctionArgs {
             args, number_rows, ..
@@ -198,7 +213,7 @@ mod tests {
     async fn uint64_normal_outputs_values() {
         let values = query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Normal::new()),
-            "SELECT randgen_uint64_normal(arrow_cast(0, 'UInt64'), arrow_cast(20, 'UInt64'), arrow_cast(10, 'UInt64'), 2.0) FROM generate_series(1, 100)",
+            "SELECT randgen_uint64_normal(0, 20, 10, 2.0) FROM generate_series(1, 100)",
             DataType::UInt64,
         )
         .await;
@@ -217,7 +232,7 @@ mod tests {
     async fn uint64_normal_full_range_outputs_values() {
         let values = query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Normal::new()),
-            "SELECT randgen_uint64_normal(arrow_cast(0, 'UInt64'), arrow_cast(18446744073709551615, 'UInt64'), arrow_cast(9223372036854775807, 'UInt64'), 1.0) FROM generate_series(1, 10)",
+            "SELECT randgen_uint64_normal(0, 18446744073709551615, 9223372036854775807, 1.0) FROM generate_series(1, 10)",
             DataType::UInt64,
         )
         .await;
@@ -230,7 +245,7 @@ mod tests {
     async fn uint64_normal_large_stddev_full_range_outputs_values() {
         let values = query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Normal::new()),
-            "SELECT randgen_uint64_normal(arrow_cast(0, 'UInt64'), arrow_cast(18446744073709551615, 'UInt64'), arrow_cast(9223372036854775807, 'UInt64'), 9007199254740992.0) FROM generate_series(1, 10)",
+            "SELECT randgen_uint64_normal(0, 18446744073709551615, 9223372036854775807, 9007199254740992.0) FROM generate_series(1, 10)",
             DataType::UInt64,
         )
         .await;
@@ -243,7 +258,7 @@ mod tests {
     async fn uint64_normal_huge_stddev_single_value_range_outputs_value() {
         let values = query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Normal::new()),
-            "SELECT randgen_uint64_normal(arrow_cast(0, 'UInt64'), arrow_cast(0, 'UInt64'), arrow_cast(0, 'UInt64'), 9007199254740992.0) FROM generate_series(1, 1)",
+            "SELECT randgen_uint64_normal(0, 0, 0, 9007199254740992.0) FROM generate_series(1, 1)",
             DataType::UInt64,
         )
         .await;
@@ -255,7 +270,7 @@ mod tests {
     async fn uint64_normal_invalid_stddev_errors() {
         let result = query_result(
             ScalarUDF::from(UInt64Normal::new()),
-            "SELECT randgen_uint64_normal(arrow_cast(0, 'UInt64'), arrow_cast(20, 'UInt64'), arrow_cast(10, 'UInt64'), 0.0) FROM generate_series(1, 10)",
+            "SELECT randgen_uint64_normal(0, 20, 10, 0.0) FROM generate_series(1, 10)",
         )
         .await;
 
@@ -266,7 +281,7 @@ mod tests {
     async fn uint64_normal_invalid_range_errors() {
         let result = query_result(
             ScalarUDF::from(UInt64Normal::new()),
-            "SELECT randgen_uint64_normal(arrow_cast(20, 'UInt64'), arrow_cast(0, 'UInt64'), arrow_cast(10, 'UInt64'), 1.0) FROM generate_series(1, 10)",
+            "SELECT randgen_uint64_normal(20, 0, 10, 1.0) FROM generate_series(1, 10)",
         )
         .await;
 
@@ -277,7 +292,7 @@ mod tests {
     async fn uint64_normal_mean_just_outside_range_outputs_tail_values() {
         let values = query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Normal::new()),
-            "SELECT randgen_uint64_normal(arrow_cast(0, 'UInt64'), arrow_cast(20, 'UInt64'), arrow_cast(21, 'UInt64'), 5.0) FROM generate_series(1, 10)",
+            "SELECT randgen_uint64_normal(0, 20, 21, 5.0) FROM generate_series(1, 10)",
             DataType::UInt64,
         )
         .await;
@@ -295,7 +310,51 @@ mod tests {
     async fn uint64_normal_far_tail_errors_after_retry_cap() {
         let result = query_result(
             ScalarUDF::from(UInt64Normal::new()),
-            "SELECT randgen_uint64_normal(arrow_cast(0, 'UInt64'), arrow_cast(1, 'UInt64'), arrow_cast(1000, 'UInt64'), 1.0) FROM generate_series(1, 1)",
+            "SELECT randgen_uint64_normal(0, 1, 1000, 1.0) FROM generate_series(1, 1)",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn uint64_normal_negative_min_literal_errors() {
+        let result = query_result(
+            ScalarUDF::from(UInt64Normal::new()),
+            "SELECT randgen_uint64_normal(-1, 10, 0, 1.0) FROM generate_series(1, 1)",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn uint64_normal_negative_max_literal_errors() {
+        let result = query_result(
+            ScalarUDF::from(UInt64Normal::new()),
+            "SELECT randgen_uint64_normal(0, -1, 0, 1.0) FROM generate_series(1, 1)",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn uint64_normal_negative_mean_literal_errors() {
+        let result = query_result(
+            ScalarUDF::from(UInt64Normal::new()),
+            "SELECT randgen_uint64_normal(0, 10, -1, 1.0) FROM generate_series(1, 1)",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn uint64_normal_negative_column_value_errors() {
+        let result = query_result(
+            ScalarUDF::from(UInt64Normal::new()),
+            "SELECT randgen_uint64_normal(min_value, max_value, mean_value, stddev) FROM (VALUES (0, 10, 5, 1.0), (0, 10, -1, 1.0)) AS t(min_value, max_value, mean_value, stddev)",
         )
         .await;
 
@@ -306,7 +365,7 @@ mod tests {
     async fn uint64_normal_array_args_propagate_nulls() {
         let values = query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Normal::new()),
-            "SELECT randgen_uint64_normal(min_value, max_value, mean_value, stddev) FROM (VALUES (arrow_cast(0, 'UInt64'), arrow_cast(20, 'UInt64'), arrow_cast(10, 'UInt64'), 1.0), (arrow_cast(NULL, 'UInt64'), arrow_cast(20, 'UInt64'), arrow_cast(10, 'UInt64'), 1.0), (arrow_cast(0, 'UInt64'), arrow_cast(20, 'UInt64'), arrow_cast(NULL, 'UInt64'), 1.0), (arrow_cast(0, 'UInt64'), arrow_cast(20, 'UInt64'), arrow_cast(10, 'UInt64'), CAST(NULL AS DOUBLE))) AS t(min_value, max_value, mean_value, stddev)",
+            "SELECT randgen_uint64_normal(min_value, max_value, mean_value, stddev) FROM (VALUES (0, 20, 10, 1.0), (NULL, 20, 10, 1.0), (0, 20, NULL, 1.0), (0, 20, 10, CAST(NULL AS DOUBLE))) AS t(min_value, max_value, mean_value, stddev)",
             DataType::UInt64,
         )
         .await;
@@ -319,7 +378,7 @@ mod tests {
     async fn uint64_normal_array_args_without_nulls_output_values() {
         let values = query_to_values::<UInt64Type>(
             ScalarUDF::from(UInt64Normal::new()),
-            "SELECT randgen_uint64_normal(min_value, max_value, mean_value, stddev) FROM (VALUES (arrow_cast(0, 'UInt64'), arrow_cast(20, 'UInt64'), arrow_cast(10, 'UInt64'), 1.0), (arrow_cast(10, 'UInt64'), arrow_cast(30, 'UInt64'), arrow_cast(20, 'UInt64'), 2.0)) AS t(min_value, max_value, mean_value, stddev)",
+            "SELECT randgen_uint64_normal(min_value, max_value, mean_value, stddev) FROM (VALUES (0, 20, 10, 1.0), (10, 30, 20, 2.0)) AS t(min_value, max_value, mean_value, stddev)",
             DataType::UInt64,
         )
         .await;
