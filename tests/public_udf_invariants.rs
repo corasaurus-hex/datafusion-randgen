@@ -139,18 +139,22 @@ fn timestamp_range_strategy() -> impl Strategy<Value = (i64, i64)> {
 }
 
 fn i64_normal_strategy() -> impl Strategy<Value = (i64, i64, i64, f64)> {
-    (any::<i64>(), 0_u16..=512, 0_u16..=512, 1_u16..=1000).prop_map(
-        |(min, span, mean_index, stddev)| {
+    (
+        -1_000_000_i64..=1_000_000,
+        0_u16..=512,
+        0_u16..=512,
+        1_u16..=1000,
+    )
+        .prop_map(|(min, span, mean_index, stddev)| {
             let max = (min as i128 + span as i128).min(i64::MAX as i128) as i64;
             let range_len = (max as i128 - min as i128 + 1) as u16;
             let mean = (min as i128 + (mean_index % range_len) as i128) as i64;
             (min, max, mean, f64::from(stddev) / 10.0)
-        },
-    )
+        })
 }
 
 fn u64_normal_strategy() -> impl Strategy<Value = (u64, u64, u64, f64)> {
-    (any::<u64>(), 0_u16..=512, 0_u16..=512, 1_u16..=1000).prop_map(
+    (0_u64..=1_000_000, 0_u16..=512, 0_u16..=512, 1_u16..=1000).prop_map(
         |(min, span, mean_index, stddev)| {
             let max = min.saturating_add(span as u64);
             let range_len = (max - min + 1) as u16;

@@ -43,30 +43,24 @@ return DataFusion errors. They do not silently clamp or swap values.
 | `randgen_uint64_uniform`        | `min UInt64, max UInt64`                                 | `UInt64`                 | Requires `min <= max`; supports the full `UInt64` range.                                  |
 | `randgen_float64_uniform`       | `min Float64, max Float64`                               | `Float64`                | Requires finite bounds, finite span, and `min <= max`.                                    |
 | `randgen_float64_normal`        | `mean Float64, stddev Float64`                           | `Float64`                | Requires finite arguments and `stddev > 0`.                                               |
-| `randgen_int64_normal`          | `min Int64, max Int64, mean Int64, stddev Float64`       | `Int64`                  | Requires `min <= max`; `stddev` is caller-supplied; large `stddev` uses low-bit dither.   |
-| `randgen_uint64_normal`         | `min UInt64, max UInt64, mean UInt64, stddev Float64`    | `UInt64`                 | Requires `min <= max`; `stddev` is caller-supplied; large `stddev` uses low-bit dither.   |
+| `randgen_int64_normal`          | `min Int64, max Int64, mean Int64, stddev Float64`       | `Int64`                  | Requires `min <= max`; samples a rounded f64 normal and rejects values outside the range. |
+| `randgen_uint64_normal`         | `min UInt64, max UInt64, mean UInt64, stddev Float64`    | `UInt64`                 | Requires `min <= max`; samples a rounded f64 normal and rejects values outside the range. |
 | `randgen_bool`                  | `probability Float64`                                    | `Boolean`                | Requires a finite probability in `0.0..=1.0`.                                             |
 | `randgen_utf8`                  | `characters Utf8, min_length Int64, max_length Int64`    | `Utf8`                   | Uses the distinct characters from `characters`; requires `0 <= min_length <= max_length`. |
 | `randgen_choice`                | `choices List<T>`                                        | `T`                      | Samples one element from a non-empty list for each row.                                   |
 | `randgen_date32`                | `min Date32, max Date32`                                 | `Date32`                 | Requires `min <= max`; samples from the inclusive day range.                              |
 | `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)` | `Timestamp(Millisecond)` | Requires matching timestamp timezones and `min <= max`.                                   |
 
-For the integer normal generators, `min..=max` is a truncation bound, not an input used to calculate `stddev`. `mean` centers the unbounded
-distribution and is allowed to sit outside the output range. Small and moderate
-`stddev` values use rounded f64 normal offsets. Large `stddev` values use
-centered low-bit integer dither so f64 spacing doesn't leave
-regular gaps between reachable integers. Every integer in the requested range
-remains reachable.
+For the integer normal generators, `min..=max` is a truncation bound, not an
+input used to calculate `stddev`. The implementation samples an f64 normal
+centered on `mean`, rounds to the nearest integer, and retries when the rounded
+value falls outside `min..=max`. A single-value range returns that value. Very
+low-probability tail ranges can error after a bounded number of retries; widen
+the range or move `mean` closer to the requested output range in that case.
 
-The hybrid router estimates the probability that an unbounded draw lands inside
-`min..=max`. High-acceptance calls stay on the f64 or dithered fast path. When
-the estimated acceptance probability drops below 5%, the sampler switches to
-exact integer-domain proposals: bounded uniform rejection for small ranges near
-the center, and a discrete exponential proposal for one-sided tails. If f64
-rounding can't represent the required integer domain exactly, full-range and
-high-mass calls fall back to Karney-style discrete normal sampling. A
-single-value range returns that value, which is the correct truncated
-distribution.
+Use `randgen_int64_uniform` or `randgen_uint64_uniform` when every integer in a
+large range must be directly representable. Integer normal sampling is
+f64-backed and inherits f64 spacing limits for very large magnitudes.
 
 ## Examples
 

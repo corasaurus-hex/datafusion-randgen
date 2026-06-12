@@ -12,11 +12,11 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::{Float64Type, Int64Type};
 use arrow_array::{Array, Int64Array};
 use arrow_schema::DataType;
-use datafusion_common::{Result, ScalarValue, exec_err};
+use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 
-use crate::randgen::integer_normal::IntegerNormalSampler;
+use crate::randgen::integer_normal::RoundedIntegerNormalSampler;
 use crate::randgen::utils::four_array_args;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -43,27 +43,16 @@ fn sampler_for_range(
     mean: i64,
     stddev: f64,
     name: &str,
-) -> Result<IntegerNormalSampler> {
-    if min > max {
-        return exec_err!("{name} requires min <= max");
-    }
-
-    IntegerNormalSampler::for_offset_range(
-        min as i128 - mean as i128,
-        max as i128 - mean as i128,
-        stddev,
-        name,
-    )
+) -> Result<RoundedIntegerNormalSampler> {
+    RoundedIntegerNormalSampler::new(min as i128, max as i128, mean as i128, stddev, name)
 }
 
 fn sample_int64<R: Rng + ?Sized>(
     rng: &mut R,
-    mean: i64,
-    sampler: &IntegerNormalSampler,
+    sampler: &RoundedIntegerNormalSampler,
     name: &str,
 ) -> Result<i64> {
-    let offset = sampler.sample_offset(rng, name)?;
-    Ok((mean as i128 + offset) as i64)
+    Ok(sampler.sample(rng, name)? as i64)
 }
 
 impl Int64Normal {
@@ -95,7 +84,7 @@ impl Int64Normal {
             let sampler = sampler_for_range(min, max, mean, stddev, self.name())?;
             let mut values = Vec::with_capacity(number_rows);
             for _ in 0..number_rows {
-                values.push(sample_int64(&mut rng, mean, &sampler, self.name())?);
+                values.push(sample_int64(&mut rng, &sampler, self.name())?);
             }
 
             return Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))));
@@ -166,7 +155,7 @@ impl ScalarUDFImpl for Int64Normal {
                 let mean = mean_values.value(row);
                 let stddev = stddev_values.value(row);
                 let sampler = sampler_for_range(min, max, mean, stddev, self.name())?;
-                values.push(sample_int64(&mut rng, mean, &sampler, self.name())?);
+                values.push(sample_int64(&mut rng, &sampler, self.name())?);
             }
 
             return Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))));
@@ -188,7 +177,7 @@ impl ScalarUDFImpl for Int64Normal {
             let mean = mean_values.value(row);
             let stddev = stddev_values.value(row);
             let sampler = sampler_for_range(min, max, mean, stddev, self.name())?;
-            values.push(Some(sample_int64(&mut rng, mean, &sampler, self.name())?));
+            values.push(Some(sample_int64(&mut rng, &sampler, self.name())?));
         }
 
         Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))))
@@ -204,30 +193,6 @@ mod tests {
     use crate::randgen::test_helpers::querying::{query_result, query_to_values};
 
     use super::*;
-
-    #[test]
-    fn int64_normal_uses_f64_for_exact_offset_ranges() {
-        let sampler =
-            sampler_for_range(i64::MAX - 10, i64::MAX, i64::MAX - 5, 1.0, "test").unwrap();
-
-        assert!(sampler.uses_f64());
-    }
-
-    #[test]
-    fn int64_normal_uses_integer_domain_for_full_type_range() {
-        let sampler = sampler_for_range(i64::MIN, i64::MAX, 0, 1.0, "test").unwrap();
-
-        assert!(sampler.uses_integer_domain());
-    }
-
-    #[test]
-    fn int64_normal_uses_dither_for_large_stddev() {
-        let sampler =
-            sampler_for_range(i64::MIN, i64::MAX, 0, (1_u64 << 53) as f64, "test").unwrap();
-
-        assert!(sampler.uses_f64());
-        assert!(sampler.uses_dither());
-    }
 
     #[tokio::test]
     async fn int64_normal_outputs_values() {
@@ -309,10 +274,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn int64_normal_mean_outside_range_outputs_tail_values() {
+    async fn int64_normal_mean_just_outside_range_outputs_tail_values() {
         let values = query_to_values::<Int64Type>(
             ScalarUDF::from(Int64Normal::new()),
-            "SELECT randgen_int64_normal(0, 20, 30, 1.0) FROM generate_series(1, 10)",
+            "SELECT randgen_int64_normal(0, 20, 21, 5.0) FROM generate_series(1, 10)",
             DataType::Int64,
         )
         .await;
@@ -324,6 +289,17 @@ mod tests {
                 .flatten()
                 .all(|value| (0..=20).contains(value))
         );
+    }
+
+    #[tokio::test]
+    async fn int64_normal_far_tail_errors_after_retry_cap() {
+        let result = query_result(
+            ScalarUDF::from(Int64Normal::new()),
+            "SELECT randgen_int64_normal(0, 1, 1000, 1.0) FROM generate_series(1, 1)",
+        )
+        .await;
+
+        assert!(result.is_err());
     }
 
     #[tokio::test]

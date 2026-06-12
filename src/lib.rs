@@ -80,13 +80,10 @@ pub fn float64_normal_udf() -> ScalarUDF {
 ///
 /// The UDF returns an `Int64` in the inclusive range `min..=max`. `stddev` is
 /// supplied by the caller; the range is a truncation bound, not an input used to
-/// calculate standard deviation, and `mean` may be outside the range. Large
-/// `stddev` values use centered low-bit integer dither so f64 spacing does not
-/// leave regular integer gaps. The sampler estimates truncation acceptance:
-/// high-acceptance calls stay on the fast path, while low-acceptance bounded
-/// and tail calls use exact integer-domain proposals. Exact fallbacks also
-/// cover ranges that f64 rounding cannot represent safely. `min <= max`, and
-/// `stddev` must be finite and greater than zero.
+/// calculate standard deviation, and `mean` may be outside the range. Sampling
+/// uses a rounded f64 normal and retries values outside the truncation range.
+/// Very low-probability tail ranges can error after a bounded number of
+/// retries. `min <= max`, and `stddev` must be finite and greater than zero.
 pub fn int64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(Int64Normal::new())
 }
@@ -95,13 +92,10 @@ pub fn int64_normal_udf() -> ScalarUDF {
 ///
 /// The UDF returns a `UInt64` in the inclusive range `min..=max`. `stddev` is
 /// supplied by the caller; the range is a truncation bound, not an input used to
-/// calculate standard deviation, and `mean` may be outside the range. Large
-/// `stddev` values use centered low-bit integer dither so f64 spacing does not
-/// leave regular integer gaps. The sampler estimates truncation acceptance:
-/// high-acceptance calls stay on the fast path, while low-acceptance bounded
-/// and tail calls use exact integer-domain proposals. Exact fallbacks also
-/// cover ranges that f64 rounding cannot represent safely. `min <= max`, and
-/// `stddev` must be finite and greater than zero.
+/// calculate standard deviation, and `mean` may be outside the range. Sampling
+/// uses a rounded f64 normal and retries values outside the truncation range.
+/// Very low-probability tail ranges can error after a bounded number of
+/// retries. `min <= max`, and `stddev` must be finite and greater than zero.
 pub fn uint64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(UInt64Normal::new())
 }
