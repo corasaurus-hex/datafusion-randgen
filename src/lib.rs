@@ -25,10 +25,10 @@
 //! generated values under nulls. Use `randgen_nullable(value, probability)` when
 //! nullability must wrap an arbitrary expression.
 //!
-//! With `column-choice-parquet` enabled,
+//! With `column-choice-parquet` or `column-choice-arrow-ipc` enabled,
 //! `randgen_column_choice(source_path, column_name[, null_probability])`
-//! samples from distinct non-null `UInt32` or `UInt64` values in a Parquet
-//! column.
+//! samples from distinct non-null `UInt32` or `UInt64` values in a supported
+//! columnar file.
 
 #![deny(missing_docs)]
 
@@ -36,7 +36,7 @@ use datafusion_expr::ScalarUDF;
 
 pub use crate::randgen::bool::Bool;
 pub use crate::randgen::choice::Choice;
-#[cfg(feature = "column-choice-parquet")]
+#[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
 pub use crate::randgen::column_choice::ColumnChoice;
 pub use crate::randgen::date32::Date32;
 pub use crate::randgen::float64_normal::Float64Normal;
@@ -155,10 +155,10 @@ pub fn nullable_udf() -> ScalarUDF {
 
 /// Builds `randgen_column_choice(source_path, column_name[, null_probability])`.
 ///
-/// Samples with replacement from distinct non-null values in a Parquet column.
-/// `source_path` and `column_name` must be scalar strings known at planning
-/// time. Source columns must use `UInt32` or `UInt64`.
-#[cfg(feature = "column-choice-parquet")]
+/// Samples with replacement from distinct non-null values in a supported
+/// columnar file. `source_path` and `column_name` must be scalar strings known
+/// at planning time. Source columns must use `UInt32` or `UInt64`.
+#[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
 pub fn column_choice_udf() -> ScalarUDF {
     ScalarUDF::from(ColumnChoice::new())
 }
@@ -183,7 +183,8 @@ pub fn timestamp_millisecond_udf() -> ScalarUDF {
 /// Builds all UDFs exported by this crate.
 ///
 /// Register these when a session should expose the whole generator set. With
-/// `column-choice-parquet` enabled, the list includes `randgen_column_choice`.
+/// a column-choice source feature enabled, the list includes
+/// `randgen_column_choice`.
 pub fn all_udfs() -> Vec<ScalarUDF> {
     let udfs = vec![
         int64_uniform_udf(),
@@ -200,7 +201,7 @@ pub fn all_udfs() -> Vec<ScalarUDF> {
         timestamp_millisecond_udf(),
     ];
 
-    #[cfg(feature = "column-choice-parquet")]
+    #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
     let udfs = {
         let mut udfs = udfs;
         udfs.push(column_choice_udf());

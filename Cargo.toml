@@ -12,10 +12,12 @@ rust-version = "1.89.0"
 
 [features]
 default = []
+column-choice-arrow-ipc = ["dep:arrow-ipc", "dep:roaring"]
 column-choice-parquet = ["dep:parquet", "dep:roaring"]
 
 [dependencies]
 arrow-array = { version = "58.0.0", default-features = false }
+arrow-ipc = { version = "58.0.0", optional = true, default-features = false }
 arrow-schema = { version = "58.0.0", default-features = false }
 datafusion-common = { version = "53.1.0", default-features = false }
 datafusion-expr = { version = "53.1.0", default-features = false }

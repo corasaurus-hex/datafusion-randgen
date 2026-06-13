@@ -13,11 +13,15 @@ session code chooses which UDFs to register.
 datafusion-randgen = "0.1.0"
 ```
 
-Enable Parquet-backed column sampling with a feature flag:
+Enable file-backed column sampling with feature flags:
 
 ```toml
 [dependencies]
 datafusion-randgen = { version = "0.1.0", features = ["column-choice-parquet"] }
+# or
+datafusion-randgen = { version = "0.1.0", features = ["column-choice-arrow-ipc"] }
+# or both
+datafusion-randgen = { version = "0.1.0", features = ["column-choice-parquet", "column-choice-arrow-ipc"] }
 ```
 
 ## Register
@@ -63,7 +67,7 @@ so generated values are not stored under null rows.
 | `randgen_utf8`                  | `characters Utf8, min_length Int64, max_length Int64[, null_probability Float64]`    | `Utf8`                   | Uses the distinct characters from `characters`; requires `0 <= min_length <= max_length`. |
 | `randgen_choice`                | `choices List<T>[, null_probability Float64]`                                        | `T`                      | Samples one element from a non-empty list for each row.                                   |
 | `randgen_nullable`              | `value T, probability Float64`                                                       | `T`                      | Rebuilds null rows safely around any expression; preserves existing nulls.                |
-| `randgen_column_choice`         | `source_path Utf8, column_name Utf8[, null_probability Float64]`                     | `UInt32` or `UInt64`     | Feature `column-choice-parquet`; samples distinct non-null values from a Parquet column.  |
+| `randgen_column_choice`         | `source_path Utf8, column_name Utf8[, null_probability Float64]`                     | `UInt32` or `UInt64`     | Feature-gated; samples distinct non-null values from a supported source column.           |
 | `randgen_date32`                | `min Date32, max Date32[, null_probability Float64]`                                 | `Date32`                 | Requires `min <= max`; samples from the inclusive day range.                              |
 | `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)[, null_probability Float64]` | `Timestamp(Millisecond)` | Requires matching timestamp timezones and `min <= max`.                                   |
 
@@ -82,13 +86,15 @@ Choose `randgen_int64_uniform` or `randgen_uint64_uniform` when every integer in
 a large range must be directly representable. Integer normal sampling is
 f64-backed and inherits f64 spacing limits for very large magnitudes.
 
-`randgen_column_choice` requires the `column-choice-parquet` feature. It reads
-`source_path` as Parquet regardless of the file extension. Both arguments must
-be scalar strings known at planning time; row values are rejected. The source
-column must be `UInt32` or `UInt64`. The loader ignores null source values,
-collapses duplicates, and keeps the remaining distinct values. Generated rows
-sample from that set with replacement. A UDF instance caches loaded sets by
-path, column name, file size, and modified timestamp.
+`randgen_column_choice` requires at least one source feature:
+`column-choice-parquet` for Parquet files, or `column-choice-arrow-ipc` for
+Arrow IPC file and stream files. It detects the source format from file
+contents, not from the file extension. Both arguments must be scalar strings
+known at planning time; row values are rejected. The source column must be
+`UInt32` or `UInt64`. The loader ignores null source values, collapses
+duplicates, and keeps the remaining distinct values. Generated rows sample from
+that set with replacement. A UDF instance caches loaded sets by format, path,
+column name, file size, and modified timestamp.
 
 `randgen_nullable` wraps any generator or expression and randomly replaces rows
 with null. The probability must be finite and inside `0.0..=1.0`; a probability
@@ -150,10 +156,12 @@ The task runs:
 - `cargo clippy --all-targets -- -D warnings`
 - `cargo nextest run --all-targets`
 
-Test the optional Parquet column-choice feature with:
+Test the optional column-choice features with:
 
 ```bash
 cargo test --features column-choice-parquet --test column_choice_parquet
+cargo test --features column-choice-arrow-ipc --test column_choice_arrow_ipc
+cargo test --all-features --test column_choice_parquet --test column_choice_arrow_ipc
 ```
 
 The integration suite includes property tests for every public UDF and a bounded

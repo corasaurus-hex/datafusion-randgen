@@ -8,7 +8,7 @@
 pub mod bool;
 /// Implementation for `randgen_choice`.
 pub mod choice;
-#[cfg(feature = "column-choice-parquet")]
+#[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
 /// Implementation for `randgen_column_choice`.
 pub mod column_choice;
 /// Implementation for `randgen_date32`.
