@@ -1,7 +1,12 @@
-use arrow_array::ArrayRef;
+use std::fmt::Display;
+
+use arrow_array::types::ArrowPrimitiveType;
+use arrow_array::{Array, ArrayRef, PrimitiveArray};
 use arrow_schema::DataType;
 use datafusion_common::{Result, exec_err, internal_err};
 use datafusion_expr::ColumnarValue;
+use rand::Rng;
+use rand::distr::uniform::SampleUniform;
 
 pub(crate) fn exact_args<const N: usize>(
     args: Vec<ColumnarValue>,
@@ -137,4 +142,90 @@ pub(crate) fn coerce_float64_argument(data_type: &DataType, name: &str) -> Resul
         DataType::Dictionary(_, value_type) => coerce_float64_argument(value_type, name),
         _ => exec_err!("{name} expects a Float64-compatible stddev argument"),
     }
+}
+
+fn validate_inclusive_range<T>(min: T, max: T, name: &str) -> Result<()>
+where
+    T: PartialOrd + Display,
+{
+    if min > max {
+        return exec_err!("{name} requires min <= max, got min {min} and max {max}");
+    }
+
+    Ok(())
+}
+
+pub(crate) fn primitive_range_scalar_array<T>(
+    min: Option<T::Native>,
+    max: Option<T::Native>,
+    number_rows: usize,
+    name: &str,
+) -> Result<PrimitiveArray<T>>
+where
+    T: ArrowPrimitiveType,
+    T::Native: Copy + SampleUniform + PartialOrd + Display,
+{
+    let mut rng = rand::rng();
+    if let (Some(min), Some(max)) = (min, max) {
+        if number_rows == 0 {
+            return Ok(PrimitiveArray::<T>::from_iter_values(
+                Vec::<T::Native>::new(),
+            ));
+        }
+
+        validate_inclusive_range(min, max, name)?;
+
+        let mut values = Vec::with_capacity(number_rows);
+        for _ in 0..number_rows {
+            values.push(rng.random_range(min..=max));
+        }
+
+        return Ok(PrimitiveArray::<T>::from_iter_values(values));
+    }
+
+    let mut values = Vec::with_capacity(number_rows);
+    for _ in 0..number_rows {
+        values.push(None);
+    }
+
+    Ok(values.into_iter().collect::<PrimitiveArray<T>>())
+}
+
+pub(crate) fn primitive_range_array<T>(
+    min_values: &PrimitiveArray<T>,
+    max_values: &PrimitiveArray<T>,
+    number_rows: usize,
+    name: &str,
+) -> Result<PrimitiveArray<T>>
+where
+    T: ArrowPrimitiveType,
+    T::Native: Copy + SampleUniform + PartialOrd + Display,
+{
+    let mut rng = rand::rng();
+    if min_values.null_count() == 0 && max_values.null_count() == 0 {
+        let mut values = Vec::with_capacity(number_rows);
+        for row in 0..number_rows {
+            let min = min_values.value(row);
+            let max = max_values.value(row);
+            validate_inclusive_range(min, max, name)?;
+            values.push(rng.random_range(min..=max));
+        }
+
+        return Ok(PrimitiveArray::<T>::from_iter_values(values));
+    }
+
+    let mut values = Vec::with_capacity(number_rows);
+    for row in 0..number_rows {
+        if min_values.is_null(row) || max_values.is_null(row) {
+            values.push(None);
+            continue;
+        }
+
+        let min = min_values.value(row);
+        let max = max_values.value(row);
+        validate_inclusive_range(min, max, name)?;
+        values.push(Some(rng.random_range(min..=max)));
+    }
+
+    Ok(values.into_iter().collect::<PrimitiveArray<T>>())
 }

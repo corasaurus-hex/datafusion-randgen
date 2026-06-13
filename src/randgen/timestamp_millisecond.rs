@@ -9,17 +9,15 @@ use std::sync::{Arc, LazyLock};
 
 use arrow_array::cast::AsArray;
 use arrow_array::types::TimestampMillisecondType;
-use arrow_array::{Array, TimestampMillisecondArray};
 use arrow_schema::{DataType, TimeUnit};
+use datafusion_common::plan_err;
 use datafusion_common::{Result, ScalarValue};
-use datafusion_common::{exec_err, plan_err};
 use datafusion_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TIMEZONE_WILDCARD, TypeSignature,
     Volatility,
 };
-use rand::Rng;
 
-use crate::randgen::utils::exact_args;
+use crate::randgen::utils::{exact_args, primitive_range_array, primitive_range_scalar_array};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// `ScalarUDFImpl` for `randgen_timestamp_millisecond(min, max)`.
@@ -93,32 +91,14 @@ impl TimestampMillisecond {
         timezone: Option<Arc<str>>,
         number_rows: usize,
     ) -> Result<ColumnarValue> {
-        let mut rng = rand::rng();
-        if let (Some(min), Some(max)) = (min, max) {
-            let mut values = Vec::with_capacity(number_rows);
-            for _ in 0..number_rows {
-                if min > max {
-                    return exec_err!(
-                        "{} requires min <= max, got min {min} and max {max}",
-                        self.name()
-                    );
-                }
-
-                values.push(rng.random_range(min..=max));
-            }
-
-            return Ok(ColumnarValue::Array(Arc::new(
-                TimestampMillisecondArray::from(values).with_timezone_opt(timezone),
-            )));
-        }
-
-        let mut values = Vec::with_capacity(number_rows);
-        for _ in 0..number_rows {
-            values.push(None);
-        }
-
+        let values = primitive_range_scalar_array::<TimestampMillisecondType>(
+            min,
+            max,
+            number_rows,
+            self.name(),
+        )?;
         Ok(ColumnarValue::Array(Arc::new(
-            TimestampMillisecondArray::from(values).with_timezone_opt(timezone),
+            values.with_timezone_opt(timezone),
         )))
     }
 }
@@ -168,54 +148,12 @@ impl ScalarUDFImpl for TimestampMillisecond {
         let min_values = min_array.as_primitive::<TimestampMillisecondType>();
         let max_values = max_array.as_primitive::<TimestampMillisecondType>();
 
-        let mut rng = rand::rng();
-        if min_values.null_count() == 0 && max_values.null_count() == 0 {
-            let mut values = Vec::with_capacity(number_rows);
-            for row in 0..number_rows {
-                let min = min_values.value(row);
-                let max = max_values.value(row);
-                if min > max {
-                    return exec_err!(
-                        "{} requires min <= max, got min {min} and max {max}",
-                        self.name()
-                    );
-                }
-
-                values.push(rng.random_range(min..=max));
-            }
-
-            let DataType::Timestamp(TimeUnit::Millisecond, timezone) = output_type else {
-                unreachable!("timestamp_millisecond_type only returns millisecond timestamps");
-            };
-            return Ok(ColumnarValue::Array(Arc::new(
-                TimestampMillisecondArray::from(values).with_timezone_opt(timezone),
-            )));
-        }
-
-        let mut values = Vec::with_capacity(number_rows);
-        for row in 0..number_rows {
-            if min_values.is_null(row) || max_values.is_null(row) {
-                values.push(None);
-                continue;
-            }
-
-            let min = min_values.value(row);
-            let max = max_values.value(row);
-            if min > max {
-                return exec_err!(
-                    "{} requires min <= max, got min {min} and max {max}",
-                    self.name()
-                );
-            }
-
-            values.push(Some(rng.random_range(min..=max)));
-        }
-
+        let values = primitive_range_array(min_values, max_values, number_rows, self.name())?;
         let DataType::Timestamp(TimeUnit::Millisecond, timezone) = output_type else {
             unreachable!("timestamp_millisecond_type only returns millisecond timestamps");
         };
         Ok(ColumnarValue::Array(Arc::new(
-            TimestampMillisecondArray::from(values).with_timezone_opt(timezone),
+            values.with_timezone_opt(timezone),
         )))
     }
 }
@@ -224,6 +162,7 @@ impl ScalarUDFImpl for TimestampMillisecond {
 mod tests {
     use std::sync::Arc;
 
+    use arrow_array::{Array, TimestampMillisecondArray};
     use arrow_schema::Field;
     use datafusion_common::config::ConfigOptions;
     use datafusion_expr::ScalarUDF;

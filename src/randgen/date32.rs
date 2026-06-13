@@ -9,13 +9,11 @@ use std::sync::{Arc, LazyLock};
 
 use arrow_array::cast::AsArray;
 use arrow_array::types::Date32Type;
-use arrow_array::{Array, Date32Array};
 use arrow_schema::DataType;
-use datafusion_common::{Result, ScalarValue, exec_err};
+use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
-use rand::Rng;
 
-use crate::randgen::utils::two_array_args;
+use crate::randgen::utils::{primitive_range_array, primitive_range_scalar_array, two_array_args};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// `ScalarUDFImpl` for `randgen_date32(min, max)`.
@@ -52,29 +50,9 @@ impl Date32 {
         max: Option<i32>,
         number_rows: usize,
     ) -> Result<ColumnarValue> {
-        let mut rng = rand::rng();
-        if let (Some(min), Some(max)) = (min, max) {
-            let mut values = Vec::with_capacity(number_rows);
-            for _ in 0..number_rows {
-                if min > max {
-                    return exec_err!(
-                        "{} requires min <= max, got min {min} and max {max}",
-                        self.name()
-                    );
-                }
-
-                values.push(rng.random_range(min..=max));
-            }
-
-            return Ok(ColumnarValue::Array(Arc::new(Date32Array::from(values))));
-        }
-
-        let mut values = Vec::with_capacity(number_rows);
-        for _ in 0..number_rows {
-            values.push(None);
-        }
-
-        Ok(ColumnarValue::Array(Arc::new(Date32Array::from(values))))
+        Ok(ColumnarValue::Array(Arc::new(
+            primitive_range_scalar_array::<Date32Type>(min, max, number_rows, self.name())?,
+        )))
     }
 }
 
@@ -118,45 +96,12 @@ impl ScalarUDFImpl for Date32 {
         let min_values = min_array.as_primitive::<Date32Type>();
         let max_values = max_array.as_primitive::<Date32Type>();
 
-        let mut rng = rand::rng();
-        if min_values.null_count() == 0 && max_values.null_count() == 0 {
-            let mut values = Vec::with_capacity(number_rows);
-            for row in 0..number_rows {
-                let min = min_values.value(row);
-                let max = max_values.value(row);
-                if min > max {
-                    return exec_err!(
-                        "{} requires min <= max, got min {min} and max {max}",
-                        self.name()
-                    );
-                }
-
-                values.push(rng.random_range(min..=max));
-            }
-
-            return Ok(ColumnarValue::Array(Arc::new(Date32Array::from(values))));
-        }
-
-        let mut values = Vec::with_capacity(number_rows);
-        for row in 0..number_rows {
-            if min_values.is_null(row) || max_values.is_null(row) {
-                values.push(None);
-                continue;
-            }
-
-            let min = min_values.value(row);
-            let max = max_values.value(row);
-            if min > max {
-                return exec_err!(
-                    "{} requires min <= max, got min {min} and max {max}",
-                    self.name()
-                );
-            }
-
-            values.push(Some(rng.random_range(min..=max)));
-        }
-
-        Ok(ColumnarValue::Array(Arc::new(Date32Array::from(values))))
+        Ok(ColumnarValue::Array(Arc::new(primitive_range_array(
+            min_values,
+            max_values,
+            number_rows,
+            self.name(),
+        )?)))
     }
 }
 

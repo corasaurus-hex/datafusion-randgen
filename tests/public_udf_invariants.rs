@@ -1,117 +1,23 @@
 use std::collections::HashSet;
-use std::sync::Arc;
 
 use arrow_array::types::{
-    ArrowPrimitiveType, Date32Type, Float64Type, Int64Type, TimestampMillisecondType, UInt64Type,
+    Date32Type, Float64Type, Int64Type, TimestampMillisecondType, UInt64Type,
 };
-use arrow_array::{ArrayRef, BooleanArray, PrimitiveArray, StringArray};
-use arrow_schema::{DataType, Field, TimeUnit};
-use datafusion_common::{ScalarValue, config::ConfigOptions};
-use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl};
+use arrow_schema::{DataType, TimeUnit};
+use datafusion_common::ScalarValue;
 use datafusion_randgen::{
     Bool, Choice, Date32, Float64Normal, Float64Uniform, Int64Normal, Int64Uniform,
     TimestampMillisecond, UInt64Normal, UInt64Uniform, Utf8,
 };
 use proptest::prelude::*;
 
+mod support;
+
+use support::{bool_values, invoke_array, primitive_values, scalar, scalar_choice_int64};
+use support::{scalar_choice_utf8, string_values};
+
 const PROP_ROWS: usize = 64;
 const STRESS_ROWS: usize = 16_384;
-
-fn call_args(
-    args: Vec<ColumnarValue>,
-    return_type: DataType,
-    return_name: &str,
-    number_rows: usize,
-) -> ScalarFunctionArgs {
-    let arg_fields = args
-        .iter()
-        .enumerate()
-        .map(|(index, arg)| Arc::new(Field::new(format!("arg{index}"), arg.data_type(), true)))
-        .collect();
-
-    ScalarFunctionArgs {
-        args,
-        arg_fields,
-        number_rows,
-        return_field: Arc::new(Field::new(return_name.to_owned(), return_type, true)),
-        config_options: Arc::new(ConfigOptions::default()),
-    }
-}
-
-fn scalar(value: ScalarValue) -> ColumnarValue {
-    ColumnarValue::Scalar(value)
-}
-
-fn invoke_array(
-    udf: &impl ScalarUDFImpl,
-    args: Vec<ColumnarValue>,
-    return_type: DataType,
-    number_rows: usize,
-) -> ArrayRef {
-    let result = udf
-        .invoke_with_args(call_args(args, return_type, udf.name(), number_rows))
-        .unwrap();
-    let ColumnarValue::Array(array) = result else {
-        panic!("expected an array result");
-    };
-    assert_eq!(array.len(), number_rows);
-    array
-}
-
-fn primitive_values<T>(array: &ArrayRef) -> Vec<Option<T::Native>>
-where
-    T: ArrowPrimitiveType,
-{
-    array
-        .as_any()
-        .downcast_ref::<PrimitiveArray<T>>()
-        .unwrap()
-        .iter()
-        .collect()
-}
-
-fn bool_values(array: &ArrayRef) -> Vec<Option<bool>> {
-    array
-        .as_any()
-        .downcast_ref::<BooleanArray>()
-        .unwrap()
-        .iter()
-        .collect()
-}
-
-fn string_values(array: &ArrayRef) -> Vec<Option<String>> {
-    array
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap()
-        .iter()
-        .map(|value| value.map(str::to_owned))
-        .collect()
-}
-
-fn scalar_choice_int64(values: &[i64]) -> ColumnarValue {
-    let values = values
-        .iter()
-        .map(|value| ScalarValue::Int64(Some(*value)))
-        .collect::<Vec<_>>();
-
-    scalar(ScalarValue::List(ScalarValue::new_list_nullable(
-        &values,
-        &DataType::Int64,
-    )))
-}
-
-fn scalar_choice_utf8(values: &[&str]) -> ColumnarValue {
-    let values = values
-        .iter()
-        .map(|value| ScalarValue::Utf8(Some((*value).to_owned())))
-        .collect::<Vec<_>>();
-
-    scalar(ScalarValue::List(ScalarValue::new_list_nullable(
-        &values,
-        &DataType::Utf8,
-    )))
-}
 
 fn i64_range_strategy() -> impl Strategy<Value = (i64, i64)> {
     (any::<i64>(), 0_u16..=4096).prop_map(|(min, span)| {

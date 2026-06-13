@@ -9,8 +9,8 @@ use std::sync::{Arc, LazyLock};
 
 use arrow_array::builder::StringBuilder;
 use arrow_array::cast::AsArray;
-use arrow_array::types::{Float64Type, Int64Type};
-use arrow_array::{Array, Float64Array, Int64Array, ListArray, new_empty_array, new_null_array};
+use arrow_array::types::{ArrowPrimitiveType, Float64Type, Int64Type};
+use arrow_array::{Array, ArrayRef, ListArray, PrimitiveArray, new_empty_array, new_null_array};
 use arrow_schema::{DataType, Field};
 use datafusion_common::Result;
 use datafusion_common::{ScalarValue, exec_err, internal_err, plan_err};
@@ -30,25 +30,33 @@ pub struct Choice {
 static CHOICE_SIGNATURE: LazyLock<Signature> =
     LazyLock::new(|| Signature::any(1, Volatility::Volatile));
 
-fn choose_from_scalar_utf8_list(
-    choices: &ListArray,
-    number_rows: usize,
-    name: &str,
-) -> Result<ColumnarValue> {
+fn scalar_list_choices(choices: &ListArray, name: &str) -> Result<Option<ArrayRef>> {
     if choices.len() != 1 {
         return internal_err!("{name} scalar List value must contain exactly one row");
     }
     if choices.is_null(0) {
-        return Ok(ColumnarValue::Array(new_null_array(
-            &DataType::Utf8,
-            number_rows,
-        )));
+        return Ok(None);
     }
 
     let row_choices = choices.value(0);
     if row_choices.is_empty() {
         return exec_err!("{name} requires at least one choice");
     }
+
+    Ok(Some(row_choices))
+}
+
+fn choose_from_scalar_utf8_list(
+    choices: &ListArray,
+    number_rows: usize,
+    name: &str,
+) -> Result<ColumnarValue> {
+    let Some(row_choices) = scalar_list_choices(choices, name)? else {
+        return Ok(ColumnarValue::Array(new_null_array(
+            &DataType::Utf8,
+            number_rows,
+        )));
+    };
 
     let row_choices = row_choices.as_string::<i32>();
     let mut rng = rand::rng();
@@ -65,27 +73,20 @@ fn choose_from_scalar_utf8_list(
     Ok(ColumnarValue::Array(Arc::new(builder.finish())))
 }
 
-fn choose_from_scalar_int64_list(
+fn choose_from_scalar_primitive_list<T>(
     choices: &ListArray,
+    data_type: &DataType,
     number_rows: usize,
     name: &str,
-) -> Result<ColumnarValue> {
-    if choices.len() != 1 {
-        return internal_err!("{name} scalar List value must contain exactly one row");
-    }
-    if choices.is_null(0) {
-        return Ok(ColumnarValue::Array(new_null_array(
-            &DataType::Int64,
-            number_rows,
-        )));
-    }
+) -> Result<ColumnarValue>
+where
+    T: ArrowPrimitiveType,
+{
+    let Some(row_choices) = scalar_list_choices(choices, name)? else {
+        return Ok(ColumnarValue::Array(new_null_array(data_type, number_rows)));
+    };
 
-    let row_choices = choices.value(0);
-    if row_choices.is_empty() {
-        return exec_err!("{name} requires at least one choice");
-    }
-
-    let row_choices = row_choices.as_primitive::<Int64Type>();
+    let row_choices = row_choices.as_primitive::<T>();
     let mut rng = rand::rng();
     if row_choices.null_count() == 0 {
         let mut values = Vec::with_capacity(number_rows);
@@ -94,7 +95,9 @@ fn choose_from_scalar_int64_list(
             values.push(row_choices.value(choice_index));
         }
 
-        return Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))));
+        return Ok(ColumnarValue::Array(Arc::new(
+            PrimitiveArray::<T>::from_iter_values(values),
+        )));
     }
 
     let mut values = Vec::with_capacity(number_rows);
@@ -107,52 +110,9 @@ fn choose_from_scalar_int64_list(
         }
     }
 
-    Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))))
-}
-
-fn choose_from_scalar_float64_list(
-    choices: &ListArray,
-    number_rows: usize,
-    name: &str,
-) -> Result<ColumnarValue> {
-    if choices.len() != 1 {
-        return internal_err!("{name} scalar List value must contain exactly one row");
-    }
-    if choices.is_null(0) {
-        return Ok(ColumnarValue::Array(new_null_array(
-            &DataType::Float64,
-            number_rows,
-        )));
-    }
-
-    let row_choices = choices.value(0);
-    if row_choices.is_empty() {
-        return exec_err!("{name} requires at least one choice");
-    }
-
-    let row_choices = row_choices.as_primitive::<Float64Type>();
-    let mut rng = rand::rng();
-    if row_choices.null_count() == 0 {
-        let mut values = Vec::with_capacity(number_rows);
-        for _ in 0..number_rows {
-            let choice_index = rng.random_range(0..row_choices.len());
-            values.push(row_choices.value(choice_index));
-        }
-
-        return Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))));
-    }
-
-    let mut values = Vec::with_capacity(number_rows);
-    for _ in 0..number_rows {
-        let choice_index = rng.random_range(0..row_choices.len());
-        if row_choices.is_null(choice_index) {
-            values.push(None);
-        } else {
-            values.push(Some(row_choices.value(choice_index)));
-        }
-    }
-
-    Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))))
+    Ok(ColumnarValue::Array(Arc::new(
+        values.into_iter().collect::<PrimitiveArray<T>>(),
+    )))
 }
 
 impl Choice {
@@ -233,10 +193,18 @@ impl ScalarUDFImpl for Choice {
             }
             return match return_field.data_type() {
                 DataType::Utf8 => choose_from_scalar_utf8_list(list, number_rows, self.name()),
-                DataType::Int64 => choose_from_scalar_int64_list(list, number_rows, self.name()),
-                DataType::Float64 => {
-                    choose_from_scalar_float64_list(list, number_rows, self.name())
-                }
+                DataType::Int64 => choose_from_scalar_primitive_list::<Int64Type>(
+                    list,
+                    return_field.data_type(),
+                    number_rows,
+                    self.name(),
+                ),
+                DataType::Float64 => choose_from_scalar_primitive_list::<Float64Type>(
+                    list,
+                    return_field.data_type(),
+                    number_rows,
+                    self.name(),
+                ),
                 _ => unreachable!("matches! limits choice scalar specializations"),
             };
         }

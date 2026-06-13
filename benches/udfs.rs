@@ -6,7 +6,10 @@ use arrow_array::{
     ArrayRef, Date32Array, Float64Array, Int64Array, TimestampMillisecondArray, UInt64Array,
 };
 use arrow_schema::{DataType, Field, TimeUnit};
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::measurement::WallTime;
+use criterion::{
+    BenchmarkGroup, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+};
 use datafusion_common::{ScalarValue, config::ConfigOptions};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl};
 use datafusion_randgen::{
@@ -49,6 +52,52 @@ fn finish(value: datafusion_common::Result<ColumnarValue>) {
         panic!("expected array result");
     };
     black_box(array.len());
+}
+
+fn bench_udf_invocation(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    id: &str,
+    udf: &impl ScalarUDFImpl,
+    invocation_args: Vec<ColumnarValue>,
+    return_type: DataType,
+    return_name: &'static str,
+) {
+    group.bench_function(BenchmarkId::new(id, ROWS), |b| {
+        b.iter(|| {
+            finish(udf.invoke_with_args(args(
+                invocation_args.clone(),
+                return_type.clone(),
+                return_name,
+            )));
+        });
+    });
+}
+
+fn bench_array_scalar_pair(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    base_id: &str,
+    udf: &impl ScalarUDFImpl,
+    array_args: Vec<ColumnarValue>,
+    scalar_args: Vec<ColumnarValue>,
+    return_type: DataType,
+    return_name: &'static str,
+) {
+    bench_udf_invocation(
+        group,
+        base_id,
+        udf,
+        array_args,
+        return_type.clone(),
+        return_name,
+    );
+    bench_udf_invocation(
+        group,
+        &format!("{base_id}_scalar_args"),
+        udf,
+        scalar_args,
+        return_type,
+        return_name,
+    );
 }
 
 fn scalar_choice(values: &[&str]) -> ColumnarValue {
@@ -99,26 +148,14 @@ fn bench_udfs(c: &mut Criterion) {
     let int_max_scalar = ColumnarValue::Scalar(ScalarValue::Int64(Some(1_000)));
     let int64_uniform = Int64Uniform::new();
     group.throughput(Throughput::Elements(ROWS as u64));
-    group.bench_function(BenchmarkId::new("randgen_int64_uniform", ROWS), |b| {
-        b.iter(|| {
-            finish(int64_uniform.invoke_with_args(args(
-                vec![int_min.clone(), int_max.clone()],
-                DataType::Int64,
-                "randgen_int64_uniform",
-            )));
-        });
-    });
-    group.bench_function(
-        BenchmarkId::new("randgen_int64_uniform_scalar_args", ROWS),
-        |b| {
-            b.iter(|| {
-                finish(int64_uniform.invoke_with_args(args(
-                    vec![int_min_scalar.clone(), int_max_scalar.clone()],
-                    DataType::Int64,
-                    "randgen_int64_uniform",
-                )));
-            });
-        },
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_int64_uniform",
+        &int64_uniform,
+        vec![int_min.clone(), int_max.clone()],
+        vec![int_min_scalar.clone(), int_max_scalar.clone()],
+        DataType::Int64,
+        "randgen_int64_uniform",
     );
 
     let uint_min = ColumnarValue::Array(array(UInt64Array::from(vec![Some(1_u64); ROWS])));
@@ -126,26 +163,14 @@ fn bench_udfs(c: &mut Criterion) {
     let uint_min_scalar = ColumnarValue::Scalar(ScalarValue::UInt64(Some(1)));
     let uint_max_scalar = ColumnarValue::Scalar(ScalarValue::UInt64(Some(1_000)));
     let uint64_uniform = UInt64Uniform::new();
-    group.bench_function(BenchmarkId::new("randgen_uint64_uniform", ROWS), |b| {
-        b.iter(|| {
-            finish(uint64_uniform.invoke_with_args(args(
-                vec![uint_min.clone(), uint_max.clone()],
-                DataType::UInt64,
-                "randgen_uint64_uniform",
-            )));
-        });
-    });
-    group.bench_function(
-        BenchmarkId::new("randgen_uint64_uniform_scalar_args", ROWS),
-        |b| {
-            b.iter(|| {
-                finish(uint64_uniform.invoke_with_args(args(
-                    vec![uint_min_scalar.clone(), uint_max_scalar.clone()],
-                    DataType::UInt64,
-                    "randgen_uint64_uniform",
-                )));
-            });
-        },
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_uint64_uniform",
+        &uint64_uniform,
+        vec![uint_min.clone(), uint_max.clone()],
+        vec![uint_min_scalar.clone(), uint_max_scalar.clone()],
+        DataType::UInt64,
+        "randgen_uint64_uniform",
     );
 
     let float_min = ColumnarValue::Array(array(Float64Array::from(vec![Some(1.0_f64); ROWS])));
@@ -153,26 +178,14 @@ fn bench_udfs(c: &mut Criterion) {
     let float_min_scalar = ColumnarValue::Scalar(ScalarValue::Float64(Some(1.0)));
     let float_max_scalar = ColumnarValue::Scalar(ScalarValue::Float64(Some(1_000.0)));
     let float64_uniform = Float64Uniform::new();
-    group.bench_function(BenchmarkId::new("randgen_float64_uniform", ROWS), |b| {
-        b.iter(|| {
-            finish(float64_uniform.invoke_with_args(args(
-                vec![float_min.clone(), float_max.clone()],
-                DataType::Float64,
-                "randgen_float64_uniform",
-            )));
-        });
-    });
-    group.bench_function(
-        BenchmarkId::new("randgen_float64_uniform_scalar_args", ROWS),
-        |b| {
-            b.iter(|| {
-                finish(float64_uniform.invoke_with_args(args(
-                    vec![float_min_scalar.clone(), float_max_scalar.clone()],
-                    DataType::Float64,
-                    "randgen_float64_uniform",
-                )));
-            });
-        },
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_float64_uniform",
+        &float64_uniform,
+        vec![float_min.clone(), float_max.clone()],
+        vec![float_min_scalar.clone(), float_max_scalar.clone()],
+        DataType::Float64,
+        "randgen_float64_uniform",
     );
 
     let normal_mean = ColumnarValue::Array(array(Float64Array::from(vec![Some(10.0_f64); ROWS])));
@@ -180,26 +193,14 @@ fn bench_udfs(c: &mut Criterion) {
     let normal_mean_scalar = ColumnarValue::Scalar(ScalarValue::Float64(Some(10.0)));
     let normal_stddev_scalar = ColumnarValue::Scalar(ScalarValue::Float64(Some(2.0)));
     let float64_normal = Float64Normal::new();
-    group.bench_function(BenchmarkId::new("randgen_float64_normal", ROWS), |b| {
-        b.iter(|| {
-            finish(float64_normal.invoke_with_args(args(
-                vec![normal_mean.clone(), normal_stddev.clone()],
-                DataType::Float64,
-                "randgen_float64_normal",
-            )));
-        });
-    });
-    group.bench_function(
-        BenchmarkId::new("randgen_float64_normal_scalar_args", ROWS),
-        |b| {
-            b.iter(|| {
-                finish(float64_normal.invoke_with_args(args(
-                    vec![normal_mean_scalar.clone(), normal_stddev_scalar.clone()],
-                    DataType::Float64,
-                    "randgen_float64_normal",
-                )));
-            });
-        },
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_float64_normal",
+        &float64_normal,
+        vec![normal_mean.clone(), normal_stddev.clone()],
+        vec![normal_mean_scalar.clone(), normal_stddev_scalar.clone()],
+        DataType::Float64,
+        "randgen_float64_normal",
     );
 
     let int_normal_min = ColumnarValue::Array(array(Int64Array::from(vec![Some(0_i64); ROWS])));
@@ -209,36 +210,24 @@ fn bench_udfs(c: &mut Criterion) {
     let int_normal_max_scalar = ColumnarValue::Scalar(ScalarValue::Int64(Some(20)));
     let int_normal_mean_scalar = ColumnarValue::Scalar(ScalarValue::Int64(Some(10)));
     let int64_normal = Int64Normal::new();
-    group.bench_function(BenchmarkId::new("randgen_int64_normal", ROWS), |b| {
-        b.iter(|| {
-            finish(int64_normal.invoke_with_args(args(
-                vec![
-                    int_normal_min.clone(),
-                    int_normal_max.clone(),
-                    int_normal_mean.clone(),
-                    normal_stddev.clone(),
-                ],
-                DataType::Int64,
-                "randgen_int64_normal",
-            )));
-        });
-    });
-    group.bench_function(
-        BenchmarkId::new("randgen_int64_normal_scalar_args", ROWS),
-        |b| {
-            b.iter(|| {
-                finish(int64_normal.invoke_with_args(args(
-                    vec![
-                        int_normal_min_scalar.clone(),
-                        int_normal_max_scalar.clone(),
-                        int_normal_mean_scalar.clone(),
-                        normal_stddev_scalar.clone(),
-                    ],
-                    DataType::Int64,
-                    "randgen_int64_normal",
-                )));
-            });
-        },
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_int64_normal",
+        &int64_normal,
+        vec![
+            int_normal_min.clone(),
+            int_normal_max.clone(),
+            int_normal_mean.clone(),
+            normal_stddev.clone(),
+        ],
+        vec![
+            int_normal_min_scalar.clone(),
+            int_normal_max_scalar.clone(),
+            int_normal_mean_scalar.clone(),
+            normal_stddev_scalar.clone(),
+        ],
+        DataType::Int64,
+        "randgen_int64_normal",
     );
 
     let uint_normal_min = ColumnarValue::Array(array(UInt64Array::from(vec![Some(0_u64); ROWS])));
@@ -248,59 +237,38 @@ fn bench_udfs(c: &mut Criterion) {
     let uint_normal_max_scalar = ColumnarValue::Scalar(ScalarValue::UInt64(Some(20)));
     let uint_normal_mean_scalar = ColumnarValue::Scalar(ScalarValue::UInt64(Some(10)));
     let uint64_normal = UInt64Normal::new();
-    group.bench_function(BenchmarkId::new("randgen_uint64_normal", ROWS), |b| {
-        b.iter(|| {
-            finish(uint64_normal.invoke_with_args(args(
-                vec![
-                    uint_normal_min.clone(),
-                    uint_normal_max.clone(),
-                    uint_normal_mean.clone(),
-                    normal_stddev.clone(),
-                ],
-                DataType::UInt64,
-                "randgen_uint64_normal",
-            )));
-        });
-    });
-    group.bench_function(
-        BenchmarkId::new("randgen_uint64_normal_scalar_args", ROWS),
-        |b| {
-            b.iter(|| {
-                finish(uint64_normal.invoke_with_args(args(
-                    vec![
-                        uint_normal_min_scalar.clone(),
-                        uint_normal_max_scalar.clone(),
-                        uint_normal_mean_scalar.clone(),
-                        normal_stddev_scalar.clone(),
-                    ],
-                    DataType::UInt64,
-                    "randgen_uint64_normal",
-                )));
-            });
-        },
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_uint64_normal",
+        &uint64_normal,
+        vec![
+            uint_normal_min.clone(),
+            uint_normal_max.clone(),
+            uint_normal_mean.clone(),
+            normal_stddev.clone(),
+        ],
+        vec![
+            uint_normal_min_scalar.clone(),
+            uint_normal_max_scalar.clone(),
+            uint_normal_mean_scalar.clone(),
+            normal_stddev_scalar.clone(),
+        ],
+        DataType::UInt64,
+        "randgen_uint64_normal",
     );
 
     let probability = ColumnarValue::Array(array(Float64Array::from(vec![Some(0.5_f64); ROWS])));
     let probability_scalar = ColumnarValue::Scalar(ScalarValue::Float64(Some(0.5)));
     let bool_udf = Bool::new();
-    group.bench_function(BenchmarkId::new("randgen_bool", ROWS), |b| {
-        b.iter(|| {
-            finish(bool_udf.invoke_with_args(args(
-                vec![probability.clone()],
-                DataType::Boolean,
-                "randgen_bool",
-            )));
-        });
-    });
-    group.bench_function(BenchmarkId::new("randgen_bool_scalar_args", ROWS), |b| {
-        b.iter(|| {
-            finish(bool_udf.invoke_with_args(args(
-                vec![probability_scalar.clone()],
-                DataType::Boolean,
-                "randgen_bool",
-            )));
-        });
-    });
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_bool",
+        &bool_udf,
+        vec![probability.clone()],
+        vec![probability_scalar.clone()],
+        DataType::Boolean,
+        "randgen_bool",
+    );
 
     let utf8_characters = ColumnarValue::Scalar(ScalarValue::Utf8(Some(
         "abcdefghijklmnopqrstuvwxyz0123456789".to_owned(),
@@ -310,28 +278,19 @@ fn bench_udfs(c: &mut Criterion) {
     let utf8_min_scalar = ColumnarValue::Scalar(ScalarValue::Int64(Some(12)));
     let utf8_max_scalar = ColumnarValue::Scalar(ScalarValue::Int64(Some(24)));
     let utf8 = Utf8::new();
-    group.bench_function(BenchmarkId::new("randgen_utf8", ROWS), |b| {
-        b.iter(|| {
-            finish(utf8.invoke_with_args(args(
-                vec![utf8_characters.clone(), utf8_min.clone(), utf8_max.clone()],
-                DataType::Utf8,
-                "randgen_utf8",
-            )));
-        });
-    });
-    group.bench_function(BenchmarkId::new("randgen_utf8_scalar_args", ROWS), |b| {
-        b.iter(|| {
-            finish(utf8.invoke_with_args(args(
-                vec![
-                    utf8_characters.clone(),
-                    utf8_min_scalar.clone(),
-                    utf8_max_scalar.clone(),
-                ],
-                DataType::Utf8,
-                "randgen_utf8",
-            )));
-        });
-    });
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_utf8",
+        &utf8,
+        vec![utf8_characters.clone(), utf8_min.clone(), utf8_max.clone()],
+        vec![
+            utf8_characters.clone(),
+            utf8_min_scalar.clone(),
+            utf8_max_scalar.clone(),
+        ],
+        DataType::Utf8,
+        "randgen_utf8",
+    );
 
     let choice = Choice::new();
     let choice_values = scalar_choice(&[
@@ -341,59 +300,47 @@ fn bench_udfs(c: &mut Criterion) {
         "Asia/Tokyo",
         "Australia/Sydney",
     ]);
-    group.bench_function(BenchmarkId::new("randgen_choice_utf8", ROWS), |b| {
-        b.iter(|| {
-            finish(choice.invoke_with_args(args(
-                vec![choice_values.clone()],
-                DataType::Utf8,
-                "randgen_choice",
-            )));
-        });
-    });
+    bench_udf_invocation(
+        &mut group,
+        "randgen_choice_utf8",
+        &choice,
+        vec![choice_values.clone()],
+        DataType::Utf8,
+        "randgen_choice",
+    );
     let choice_int64_values = scalar_choice_int64(&[10, 20, 30, 40, 50]);
-    group.bench_function(BenchmarkId::new("randgen_choice_int64", ROWS), |b| {
-        b.iter(|| {
-            finish(choice.invoke_with_args(args(
-                vec![choice_int64_values.clone()],
-                DataType::Int64,
-                "randgen_choice",
-            )));
-        });
-    });
+    bench_udf_invocation(
+        &mut group,
+        "randgen_choice_int64",
+        &choice,
+        vec![choice_int64_values.clone()],
+        DataType::Int64,
+        "randgen_choice",
+    );
     let choice_float64_values = scalar_choice_float64(&[10.0, 20.0, 30.0, 40.0, 50.0]);
-    group.bench_function(BenchmarkId::new("randgen_choice_float64", ROWS), |b| {
-        b.iter(|| {
-            finish(choice.invoke_with_args(args(
-                vec![choice_float64_values.clone()],
-                DataType::Float64,
-                "randgen_choice",
-            )));
-        });
-    });
+    bench_udf_invocation(
+        &mut group,
+        "randgen_choice_float64",
+        &choice,
+        vec![choice_float64_values.clone()],
+        DataType::Float64,
+        "randgen_choice",
+    );
 
     let date_min = ColumnarValue::Array(array(Date32Array::from(vec![Some(19_723_i32); ROWS])));
     let date_max = ColumnarValue::Array(array(Date32Array::from(vec![Some(19_753_i32); ROWS])));
     let date_min_scalar = ColumnarValue::Scalar(ScalarValue::Date32(Some(19_723)));
     let date_max_scalar = ColumnarValue::Scalar(ScalarValue::Date32(Some(19_753)));
     let date32 = Date32::new();
-    group.bench_function(BenchmarkId::new("randgen_date32", ROWS), |b| {
-        b.iter(|| {
-            finish(date32.invoke_with_args(args(
-                vec![date_min.clone(), date_max.clone()],
-                DataType::Date32,
-                "randgen_date32",
-            )));
-        });
-    });
-    group.bench_function(BenchmarkId::new("randgen_date32_scalar_args", ROWS), |b| {
-        b.iter(|| {
-            finish(date32.invoke_with_args(args(
-                vec![date_min_scalar.clone(), date_max_scalar.clone()],
-                DataType::Date32,
-                "randgen_date32",
-            )));
-        });
-    });
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_date32",
+        &date32,
+        vec![date_min.clone(), date_max.clone()],
+        vec![date_min_scalar.clone(), date_max_scalar.clone()],
+        DataType::Date32,
+        "randgen_date32",
+    );
 
     let timestamp_type = DataType::Timestamp(TimeUnit::Millisecond, Some("+00:00".into()));
     let timestamp_timezone = Some("+00:00".into());
@@ -414,29 +361,14 @@ fn bench_udfs(c: &mut Criterion) {
         timestamp_timezone,
     ));
     let timestamp_millisecond = TimestampMillisecond::new();
-    group.bench_function(
-        BenchmarkId::new("randgen_timestamp_millisecond", ROWS),
-        |b| {
-            b.iter(|| {
-                finish(timestamp_millisecond.invoke_with_args(args(
-                    vec![timestamp_min.clone(), timestamp_max.clone()],
-                    timestamp_type.clone(),
-                    "randgen_timestamp_millisecond",
-                )));
-            });
-        },
-    );
-    group.bench_function(
-        BenchmarkId::new("randgen_timestamp_millisecond_scalar_args", ROWS),
-        |b| {
-            b.iter(|| {
-                finish(timestamp_millisecond.invoke_with_args(args(
-                    vec![timestamp_min_scalar.clone(), timestamp_max_scalar.clone()],
-                    timestamp_type.clone(),
-                    "randgen_timestamp_millisecond",
-                )));
-            });
-        },
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_timestamp_millisecond",
+        &timestamp_millisecond,
+        vec![timestamp_min.clone(), timestamp_max.clone()],
+        vec![timestamp_min_scalar.clone(), timestamp_max_scalar.clone()],
+        timestamp_type.clone(),
+        "randgen_timestamp_millisecond",
     );
 
     group.finish();

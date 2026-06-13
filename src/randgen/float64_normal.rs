@@ -14,7 +14,7 @@ use arrow_schema::DataType;
 use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
-use rand_distr::Normal;
+use rand_distr::{Distribution, Normal};
 use std::sync::Arc;
 
 use crate::randgen::utils::two_array_args;
@@ -31,6 +31,35 @@ static FLOAT64_NORMAL_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
         Volatility::Volatile,
     )
 });
+
+struct FloatNormalSampler {
+    normal: Normal<f64>,
+}
+
+impl FloatNormalSampler {
+    fn new(mean: f64, stddev: f64, name: &str) -> Result<Self> {
+        if !mean.is_finite() || !stddev.is_finite() {
+            return exec_err!("{name} requires finite mean and stddev");
+        }
+        if stddev <= 0.0 {
+            return exec_err!("{name} requires stddev > 0");
+        }
+
+        let normal = Normal::new(mean, stddev).map_err(|error| {
+            datafusion_common::DataFusionError::Execution(format!(
+                "{name} invalid normal distribution parameters: {error}"
+            ))
+        })?;
+        Ok(Self { normal })
+    }
+
+    fn sample<R>(&self, rng: &mut R) -> f64
+    where
+        R: Rng + ?Sized,
+    {
+        self.normal.sample(rng)
+    }
+}
 
 impl Float64Normal {
     /// Creates the `randgen_float64_normal` implementation.
@@ -56,21 +85,16 @@ impl Float64Normal {
     ) -> Result<ColumnarValue> {
         let mut rng = rand::rng();
         if let (Some(mean), Some(stddev)) = (mean, stddev) {
+            if number_rows == 0 {
+                return Ok(ColumnarValue::Array(Arc::new(Float64Array::from(
+                    Vec::<f64>::new(),
+                ))));
+            }
+
+            let sampler = FloatNormalSampler::new(mean, stddev, self.name())?;
             let mut values = Vec::with_capacity(number_rows);
             for _ in 0..number_rows {
-                if !mean.is_finite() || !stddev.is_finite() {
-                    return exec_err!("{} requires finite mean and stddev", self.name());
-                }
-                if stddev <= 0.0 {
-                    return exec_err!("{} requires stddev > 0", self.name());
-                }
-                let normal = Normal::new(mean, stddev).map_err(|error| {
-                    datafusion_common::DataFusionError::Execution(format!(
-                        "{} invalid normal distribution parameters: {error}",
-                        self.name()
-                    ))
-                })?;
-                values.push(rng.sample(normal));
+                values.push(sampler.sample(&mut rng));
             }
 
             return Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))));
@@ -127,19 +151,8 @@ impl ScalarUDFImpl for Float64Normal {
             for row in 0..number_rows {
                 let mean = mean_values.value(row);
                 let stddev = stddev_values.value(row);
-                if !mean.is_finite() || !stddev.is_finite() {
-                    return exec_err!("{} requires finite mean and stddev", self.name());
-                }
-                if stddev <= 0.0 {
-                    return exec_err!("{} requires stddev > 0", self.name());
-                }
-                let normal = Normal::new(mean, stddev).map_err(|error| {
-                    datafusion_common::DataFusionError::Execution(format!(
-                        "{} invalid normal distribution parameters: {error}",
-                        self.name()
-                    ))
-                })?;
-                values.push(rng.sample(normal));
+                let sampler = FloatNormalSampler::new(mean, stddev, self.name())?;
+                values.push(sampler.sample(&mut rng));
             }
 
             return Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))));
@@ -154,19 +167,8 @@ impl ScalarUDFImpl for Float64Normal {
 
             let mean = mean_values.value(row);
             let stddev = stddev_values.value(row);
-            if !mean.is_finite() || !stddev.is_finite() {
-                return exec_err!("{} requires finite mean and stddev", self.name());
-            }
-            if stddev <= 0.0 {
-                return exec_err!("{} requires stddev > 0", self.name());
-            }
-            let normal = Normal::new(mean, stddev).map_err(|error| {
-                datafusion_common::DataFusionError::Execution(format!(
-                    "{} invalid normal distribution parameters: {error}",
-                    self.name()
-                ))
-            })?;
-            values.push(Some(rng.sample(normal)));
+            let sampler = FloatNormalSampler::new(mean, stddev, self.name())?;
+            values.push(Some(sampler.sample(&mut rng)));
         }
 
         Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))))
