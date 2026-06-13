@@ -1,9 +1,10 @@
 //! UInt64 uniform random generator.
 //!
-//! `randgen_uint64_uniform(min, max)` samples from the inclusive integer range
-//! `min..=max`. Null bounds produce null output for that row. Non-null bounds
-//! must satisfy `min <= max`. Arguments may be `UInt64` values or nonnegative
-//! signed integer values.
+//! `randgen_uint64_uniform(min, max[, null_probability])` samples from the
+//! inclusive integer range `min..=max`. Null bounds produce null output for
+//! that row. Non-null bounds must satisfy `min <= max`. Arguments may be
+//! `UInt64` values or nonnegative signed integer values. The optional null
+//! probability must be finite and within `0.0..=1.0`.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -11,15 +12,16 @@ use std::sync::{Arc, LazyLock};
 use arrow_array::cast::AsArray;
 use arrow_array::types::UInt64Type;
 use arrow_schema::DataType;
-use datafusion_common::{Result, ScalarValue, exec_err};
+use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 
 use crate::randgen::utils::{
-    coerce_uint64_argument, primitive_range_array, primitive_range_scalar_array, two_array_args,
+    NullProbability, coerce_optional_null_probability, coerce_uint64_argument, optional_args,
+    primitive_range_array, primitive_range_scalar_array, two_array_args,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// `ScalarUDFImpl` for `randgen_uint64_uniform(min, max)`.
+/// `ScalarUDFImpl` for `randgen_uint64_uniform(min, max[, null_probability])`.
 pub struct UInt64Uniform {
     signature: &'static Signature,
 }
@@ -48,9 +50,16 @@ impl UInt64Uniform {
         min: Option<u64>,
         max: Option<u64>,
         number_rows: usize,
+        null_probability: &NullProbability,
     ) -> Result<ColumnarValue> {
         Ok(ColumnarValue::Array(Arc::new(
-            primitive_range_scalar_array::<UInt64Type>(min, max, number_rows, self.name())?,
+            primitive_range_scalar_array::<UInt64Type>(
+                min,
+                max,
+                number_rows,
+                self.name(),
+                null_probability,
+            )?,
         )))
     }
 }
@@ -73,36 +82,27 @@ impl ScalarUDFImpl for UInt64Uniform {
     }
 
     fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
-        if arg_types.len() != 2 {
-            let argument = if arg_types.len() == 1 {
-                "argument"
-            } else {
-                "arguments"
-            };
-            return exec_err!(
-                "{} expects exactly 2 arguments, got {} {argument}",
-                self.name(),
-                arg_types.len()
-            );
-        }
-
-        Ok(vec![
-            coerce_uint64_argument(&arg_types[0], self.name())?,
-            coerce_uint64_argument(&arg_types[1], self.name())?,
-        ])
+        coerce_optional_null_probability(arg_types, 2, self.name(), |arg_types| {
+            Ok(vec![
+                coerce_uint64_argument(&arg_types[0], self.name())?,
+                coerce_uint64_argument(&arg_types[1], self.name())?,
+            ])
+        })
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [min, max] = crate::randgen::utils::exact_args(args, self.name())?;
+        let ([min, max], null_probability) = optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
         if let (
             ColumnarValue::Scalar(ScalarValue::UInt64(min)),
             ColumnarValue::Scalar(ScalarValue::UInt64(max)),
         ) = (&min, &max)
         {
-            return self.invoke_scalar_args(*min, *max, number_rows);
+            return self.invoke_scalar_args(*min, *max, number_rows, &null_probability);
         }
 
         let (min_array, max_array) = two_array_args(
@@ -120,6 +120,7 @@ impl ScalarUDFImpl for UInt64Uniform {
             max_values,
             number_rows,
             self.name(),
+            &null_probability,
         )?)))
     }
 }

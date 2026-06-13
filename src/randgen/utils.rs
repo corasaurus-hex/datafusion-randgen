@@ -1,9 +1,11 @@
 use std::fmt::Display;
 
+use arrow_array::cast::AsArray;
 use arrow_array::types::ArrowPrimitiveType;
+use arrow_array::types::Float64Type;
 use arrow_array::{Array, ArrayRef, PrimitiveArray};
 use arrow_schema::DataType;
-use datafusion_common::{Result, exec_err, internal_err};
+use datafusion_common::{Result, ScalarValue, exec_err, internal_err};
 use datafusion_expr::ColumnarValue;
 use rand::Rng;
 use rand::distr::uniform::SampleUniform;
@@ -17,6 +19,111 @@ pub(crate) fn exact_args<const N: usize>(
         Err(_) => {
             let argument = if N == 1 { "argument" } else { "arguments" };
             internal_err!("{name} expects exactly {N} {argument}")
+        }
+    }
+}
+
+pub(crate) fn optional_args<const N: usize>(
+    mut args: Vec<ColumnarValue>,
+    name: &str,
+) -> Result<([ColumnarValue; N], Option<ColumnarValue>)> {
+    if args.len() != N && args.len() != N + 1 {
+        let max_args = N + 1;
+        return exec_err!(
+            "{name} expects {N} or {max_args} arguments, got {}",
+            args.len()
+        );
+    }
+
+    let null_probability = if args.len() == N + 1 {
+        args.pop()
+    } else {
+        None
+    };
+
+    match args.try_into() {
+        Ok(args) => Ok((args, null_probability)),
+        Err(_) => unreachable!("argument count checked above"),
+    }
+}
+
+pub(crate) fn coerce_optional_null_probability(
+    arg_types: &[DataType],
+    required_args: usize,
+    name: &str,
+    mut coerce_required: impl FnMut(&[DataType]) -> Result<Vec<DataType>>,
+) -> Result<Vec<DataType>> {
+    if arg_types.len() != required_args && arg_types.len() != required_args + 1 {
+        let max_args = required_args + 1;
+        return exec_err!(
+            "{name} expects {required_args} or {max_args} arguments, got {}",
+            arg_types.len()
+        );
+    }
+
+    let mut coerced = coerce_required(&arg_types[..required_args])?;
+    if let Some(null_probability_type) = arg_types.get(required_args) {
+        coerced.push(coerce_float64_argument(null_probability_type, name)?);
+    }
+    Ok(coerced)
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum NullProbability {
+    None,
+    Scalar(Option<f64>),
+    Array(PrimitiveArray<Float64Type>),
+}
+
+pub(crate) fn validate_probability(probability: f64, name: &str) -> Result<()> {
+    if !probability.is_finite() || !(0.0..=1.0).contains(&probability) {
+        return exec_err!("{name} requires probability between 0.0 and 1.0 inclusive");
+    }
+
+    Ok(())
+}
+
+impl NullProbability {
+    pub(crate) fn from_optional_arg(
+        value: Option<ColumnarValue>,
+        number_rows: usize,
+        name: &str,
+    ) -> Result<Self> {
+        let Some(value) = value else {
+            return Ok(Self::None);
+        };
+
+        if let ColumnarValue::Scalar(ScalarValue::Float64(probability)) = value {
+            if let Some(probability) = probability {
+                validate_probability(probability, name)?;
+            }
+            return Ok(Self::Scalar(probability));
+        }
+
+        let array = value.into_array_of_size(number_rows)?;
+        if array.data_type() != &DataType::Float64 {
+            return internal_err!("{name} expects a Float64 null probability");
+        }
+
+        Ok(Self::Array(array.as_primitive::<Float64Type>().clone()))
+    }
+
+    pub(crate) fn is_null<R>(&self, row: usize, rng: &mut R, name: &str) -> Result<bool>
+    where
+        R: Rng + ?Sized,
+    {
+        match self {
+            Self::None => Ok(false),
+            Self::Scalar(None) => Ok(true),
+            Self::Scalar(Some(probability)) => Ok(rng.random_bool(*probability)),
+            Self::Array(probabilities) => {
+                if probabilities.is_null(row) {
+                    return Ok(true);
+                }
+                let probability = probabilities.value(row);
+                validate_probability(probability, name)?;
+                Ok(rng.random_bool(probability))
+            }
         }
     }
 }
@@ -140,7 +247,7 @@ pub(crate) fn coerce_float64_argument(data_type: &DataType, name: &str) -> Resul
         | DataType::Decimal128(_, _)
         | DataType::Decimal256(_, _) => Ok(DataType::Float64),
         DataType::Dictionary(_, value_type) => coerce_float64_argument(value_type, name),
-        _ => exec_err!("{name} expects a Float64-compatible stddev argument"),
+        _ => exec_err!("{name} expects a Float64-compatible argument"),
     }
 }
 
@@ -160,6 +267,7 @@ pub(crate) fn primitive_range_scalar_array<T>(
     max: Option<T::Native>,
     number_rows: usize,
     name: &str,
+    null_probability: &NullProbability,
 ) -> Result<PrimitiveArray<T>>
 where
     T: ArrowPrimitiveType,
@@ -176,11 +284,15 @@ where
         validate_inclusive_range(min, max, name)?;
 
         let mut values = Vec::with_capacity(number_rows);
-        for _ in 0..number_rows {
-            values.push(rng.random_range(min..=max));
+        for row in 0..number_rows {
+            if null_probability.is_null(row, &mut rng, name)? {
+                values.push(None);
+            } else {
+                values.push(Some(rng.random_range(min..=max)));
+            }
         }
 
-        return Ok(PrimitiveArray::<T>::from_iter_values(values));
+        return Ok(values.into_iter().collect::<PrimitiveArray<T>>());
     }
 
     let mut values = Vec::with_capacity(number_rows);
@@ -196,13 +308,17 @@ pub(crate) fn primitive_range_array<T>(
     max_values: &PrimitiveArray<T>,
     number_rows: usize,
     name: &str,
+    null_probability: &NullProbability,
 ) -> Result<PrimitiveArray<T>>
 where
     T: ArrowPrimitiveType,
     T::Native: Copy + SampleUniform + PartialOrd + Display,
 {
     let mut rng = rand::rng();
-    if min_values.null_count() == 0 && max_values.null_count() == 0 {
+    if min_values.null_count() == 0
+        && max_values.null_count() == 0
+        && matches!(null_probability, NullProbability::None)
+    {
         let mut values = Vec::with_capacity(number_rows);
         for row in 0..number_rows {
             let min = min_values.value(row);
@@ -224,7 +340,11 @@ where
         let min = min_values.value(row);
         let max = max_values.value(row);
         validate_inclusive_range(min, max, name)?;
-        values.push(Some(rng.random_range(min..=max)));
+        if null_probability.is_null(row, &mut rng, name)? {
+            values.push(None);
+        } else {
+            values.push(Some(rng.random_range(min..=max)));
+        }
     }
 
     Ok(values.into_iter().collect::<PrimitiveArray<T>>())

@@ -45,20 +45,27 @@ row-wise generators, null required arguments produce null output for that row.
 Invalid parameters return DataFusion errors; generators do not clamp or swap bad
 ranges.
 
-| Function                        | Arguments                                                | Returns                  | Rules                                                                                     |
-| ------------------------------- | -------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------- |
-| `randgen_int64_uniform`         | `min Int64, max Int64`                                   | `Int64`                  | Requires `min <= max`; samples from `min..=max`.                                          |
-| `randgen_uint64_uniform`        | `min UInt64, max UInt64`                                 | `UInt64`                 | Requires `min <= max`; accepts nonnegative signed integer inputs.                         |
-| `randgen_float64_uniform`       | `min Float64, max Float64`                               | `Float64`                | Requires finite bounds, finite span, and `min <= max`.                                    |
-| `randgen_float64_normal`        | `mean Float64, stddev Float64`                           | `Float64`                | Requires finite arguments and `stddev > 0`.                                               |
-| `randgen_int64_normal`          | `min Int64, max Int64, mean Int64, stddev Float64`       | `Int64`                  | Requires `min <= max`; samples a rounded f64 normal and rejects values outside the range. |
-| `randgen_uint64_normal`         | `min UInt64, max UInt64, mean UInt64, stddev Float64`    | `UInt64`                 | Requires `min <= max`; accepts nonnegative signed integer inputs.                         |
-| `randgen_bool`                  | `probability Float64`                                    | `Boolean`                | Requires a finite probability in `0.0..=1.0`.                                             |
-| `randgen_utf8`                  | `characters Utf8, min_length Int64, max_length Int64`    | `Utf8`                   | Uses the distinct characters from `characters`; requires `0 <= min_length <= max_length`. |
-| `randgen_choice`                | `choices List<T>`                                        | `T`                      | Samples one element from a non-empty list for each row.                                   |
-| `randgen_column_choice`         | `source_path Utf8, column_name Utf8`                     | `UInt32` or `UInt64`     | Feature `column-choice-parquet`; samples distinct non-null values from a Parquet column.  |
-| `randgen_date32`                | `min Date32, max Date32`                                 | `Date32`                 | Requires `min <= max`; samples from the inclusive day range.                              |
-| `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)` | `Timestamp(Millisecond)` | Requires matching timestamp timezones and `min <= max`.                                   |
+Generator UDFs except `randgen_nullable` accept an optional trailing
+`null_probability Float64` argument. It may be a scalar or a column. Values must
+be finite and inside `0.0..=1.0`; a null probability value produces null output
+for that row. Native generator nullability is applied while building the array,
+so generated values are not stored under null rows.
+
+| Function                        | Arguments                                                                            | Returns                  | Rules                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------ | ------------------------ | ----------------------------------------------------------------------------------------- |
+| `randgen_int64_uniform`         | `min Int64, max Int64[, null_probability Float64]`                                   | `Int64`                  | Requires `min <= max`; samples from `min..=max`.                                          |
+| `randgen_uint64_uniform`        | `min UInt64, max UInt64[, null_probability Float64]`                                 | `UInt64`                 | Requires `min <= max`; accepts nonnegative signed integer inputs.                         |
+| `randgen_float64_uniform`       | `min Float64, max Float64[, null_probability Float64]`                               | `Float64`                | Requires finite bounds, finite span, and `min <= max`.                                    |
+| `randgen_float64_normal`        | `mean Float64, stddev Float64[, null_probability Float64]`                           | `Float64`                | Requires finite arguments and `stddev > 0`.                                               |
+| `randgen_int64_normal`          | `min Int64, max Int64, mean Int64, stddev Float64[, null_probability Float64]`       | `Int64`                  | Requires `min <= max`; samples a rounded f64 normal and rejects values outside the range. |
+| `randgen_uint64_normal`         | `min UInt64, max UInt64, mean UInt64, stddev Float64[, null_probability Float64]`    | `UInt64`                 | Requires `min <= max`; accepts nonnegative signed integer inputs.                         |
+| `randgen_bool`                  | `probability Float64[, null_probability Float64]`                                    | `Boolean`                | First probability controls true output; optional second probability controls null output. |
+| `randgen_utf8`                  | `characters Utf8, min_length Int64, max_length Int64[, null_probability Float64]`    | `Utf8`                   | Uses the distinct characters from `characters`; requires `0 <= min_length <= max_length`. |
+| `randgen_choice`                | `choices List<T>[, null_probability Float64]`                                        | `T`                      | Samples one element from a non-empty list for each row.                                   |
+| `randgen_nullable`              | `value T, probability Float64`                                                       | `T`                      | Rebuilds null rows safely around any expression; preserves existing nulls.                |
+| `randgen_column_choice`         | `source_path Utf8, column_name Utf8[, null_probability Float64]`                     | `UInt32` or `UInt64`     | Feature `column-choice-parquet`; samples distinct non-null values from a Parquet column.  |
+| `randgen_date32`                | `min Date32, max Date32[, null_probability Float64]`                                 | `Date32`                 | Requires `min <= max`; samples from the inclusive day range.                              |
+| `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)[, null_probability Float64]` | `Timestamp(Millisecond)` | Requires matching timestamp timezones and `min <= max`.                                   |
 
 The `UInt64` generators accept `UInt64` values and nonnegative signed integer
 inputs. Plain SQL calls can mix literals such as `0` with values larger than
@@ -83,6 +90,13 @@ collapses duplicates, and keeps the remaining distinct values. Generated rows
 sample from that set with replacement. A UDF instance caches loaded sets by
 path, column name, file size, and modified timestamp.
 
+`randgen_nullable` wraps any generator or expression and randomly replaces rows
+with null. The probability must be finite and inside `0.0..=1.0`; a probability
+of `0.0` preserves the input values, and `1.0` returns all nulls. Prefer a
+generator's native `null_probability` argument when the value comes directly
+from a randgen UDF. Use `randgen_nullable` when nullability must wrap another
+expression; it rebuilds null rows instead of only overlaying a validity bitmap.
+
 ## Examples
 
 ```sql
@@ -98,7 +112,13 @@ FROM generate_series(1, 100);
 SELECT randgen_utf8('ABC123', 8, 16)
 FROM generate_series(1, 100);
 
+SELECT randgen_int64_uniform(1, 10, 0.25)
+FROM generate_series(1, 100);
+
 SELECT randgen_choice(['UTC', 'America/New_York', 'Europe/London'])
+FROM generate_series(1, 100);
+
+SELECT randgen_nullable(randgen_int64_uniform(1, 10), 0.25)
 FROM generate_series(1, 100);
 
 SELECT randgen_column_choice('/warehouse/users.parquet', 'user_id')

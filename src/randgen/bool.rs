@@ -1,8 +1,9 @@
 //! Boolean random generator.
 //!
-//! `randgen_bool(probability)` returns `true` with the supplied probability.
-//! The probability must be finite and within `0.0..=1.0`; a null probability
-//! produces null output for that row.
+//! `randgen_bool(probability[, null_probability])` returns `true` with the
+//! supplied probability. The optional second probability controls null output.
+//! Both probabilities must be finite and within `0.0..=1.0`; a null probability
+//! value produces null output for that row.
 
 use std::any::Any;
 use std::sync::LazyLock;
@@ -12,20 +13,29 @@ use arrow_array::types::Float64Type;
 use arrow_array::{Array, BooleanArray};
 use arrow_schema::DataType;
 use datafusion_common::{Result, ScalarValue, exec_err};
-use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
+};
 use rand::Rng;
 use std::sync::Arc;
 
-use crate::randgen::utils::one_array_arg;
+use crate::randgen::utils::{NullProbability, one_array_arg, optional_args};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// `ScalarUDFImpl` for `randgen_bool(probability)`.
+/// `ScalarUDFImpl` for `randgen_bool(probability[, null_probability])`.
 pub struct Bool {
     signature: &'static Signature,
 }
 
-static BOOL_SIGNATURE: LazyLock<Signature> =
-    LazyLock::new(|| Signature::exact(vec![DataType::Float64], Volatility::Volatile));
+static BOOL_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
+    Signature::one_of(
+        vec![
+            TypeSignature::Exact(vec![DataType::Float64]),
+            TypeSignature::Exact(vec![DataType::Float64, DataType::Float64]),
+        ],
+        Volatility::Volatile,
+    )
+});
 
 impl Bool {
     /// Creates the `randgen_bool` implementation.
@@ -47,11 +57,12 @@ impl Bool {
         &self,
         probability: Option<f64>,
         number_rows: usize,
+        null_probability: &NullProbability,
     ) -> Result<ColumnarValue> {
         let mut rng = rand::rng();
         let mut values = Vec::with_capacity(number_rows);
 
-        for _ in 0..number_rows {
+        for row in 0..number_rows {
             let Some(probability) = probability else {
                 values.push(None);
                 continue;
@@ -64,7 +75,11 @@ impl Bool {
                 );
             }
 
-            values.push(Some(rng.random_bool(probability)));
+            if null_probability.is_null(row, &mut rng, self.name())? {
+                values.push(None);
+            } else {
+                values.push(Some(rng.random_bool(probability)));
+            }
         }
 
         Ok(ColumnarValue::Array(Arc::new(BooleanArray::from(values))))
@@ -92,9 +107,11 @@ impl ScalarUDFImpl for Bool {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [probability] = crate::randgen::utils::exact_args(args, self.name())?;
+        let ([probability], null_probability) = optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
         if let ColumnarValue::Scalar(ScalarValue::Float64(probability)) = &probability {
-            return self.invoke_scalar_args(*probability, number_rows);
+            return self.invoke_scalar_args(*probability, number_rows, &null_probability);
         }
 
         let probability_array = one_array_arg(
@@ -121,7 +138,11 @@ impl ScalarUDFImpl for Bool {
                 );
             }
 
-            values.push(Some(rng.random_bool(probability)));
+            if null_probability.is_null(row, &mut rng, self.name())? {
+                values.push(None);
+            } else {
+                values.push(Some(rng.random_bool(probability)));
+            }
         }
 
         Ok(ColumnarValue::Array(Arc::new(BooleanArray::from(values))))

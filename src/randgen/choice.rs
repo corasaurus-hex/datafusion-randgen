@@ -1,8 +1,9 @@
 //! List choice random generator.
 //!
-//! `randgen_choice(choices)` samples one item from a `List<T>` and returns
-//! type `T`. Non-null lists must contain at least one element. Null lists
-//! produce null output for that row.
+//! `randgen_choice(choices[, null_probability])` samples one item from a
+//! `List<T>` and returns type `T`. Non-null lists must contain at least one
+//! element. Null lists produce null output for that row. The optional null
+//! probability must be finite and within `0.0..=1.0`.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -19,16 +20,16 @@ use datafusion_expr::{
 };
 use rand::Rng;
 
-use crate::randgen::utils::exact_args;
+use crate::randgen::utils::{NullProbability, coerce_float64_argument, optional_args};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// `ScalarUDFImpl` for `randgen_choice(choices)`.
+/// `ScalarUDFImpl` for `randgen_choice(choices[, null_probability])`.
 pub struct Choice {
     signature: &'static Signature,
 }
 
 static CHOICE_SIGNATURE: LazyLock<Signature> =
-    LazyLock::new(|| Signature::any(1, Volatility::Volatile));
+    LazyLock::new(|| Signature::user_defined(Volatility::Volatile));
 
 fn scalar_list_choices(choices: &ListArray, name: &str) -> Result<Option<ArrayRef>> {
     if choices.len() != 1 {
@@ -50,6 +51,7 @@ fn choose_from_scalar_utf8_list(
     choices: &ListArray,
     number_rows: usize,
     name: &str,
+    null_probability: &NullProbability,
 ) -> Result<ColumnarValue> {
     let Some(row_choices) = scalar_list_choices(choices, name)? else {
         return Ok(ColumnarValue::Array(new_null_array(
@@ -61,7 +63,11 @@ fn choose_from_scalar_utf8_list(
     let row_choices = row_choices.as_string::<i32>();
     let mut rng = rand::rng();
     let mut builder = StringBuilder::with_capacity(number_rows, 0);
-    for _ in 0..number_rows {
+    for row in 0..number_rows {
+        if null_probability.is_null(row, &mut rng, name)? {
+            builder.append_null();
+            continue;
+        }
         let choice_index = rng.random_range(0..row_choices.len());
         if row_choices.is_null(choice_index) {
             builder.append_null();
@@ -78,6 +84,7 @@ fn choose_from_scalar_primitive_list<T>(
     data_type: &DataType,
     number_rows: usize,
     name: &str,
+    null_probability: &NullProbability,
 ) -> Result<ColumnarValue>
 where
     T: ArrowPrimitiveType,
@@ -88,7 +95,7 @@ where
 
     let row_choices = row_choices.as_primitive::<T>();
     let mut rng = rand::rng();
-    if row_choices.null_count() == 0 {
+    if row_choices.null_count() == 0 && matches!(null_probability, NullProbability::None) {
         let mut values = Vec::with_capacity(number_rows);
         for _ in 0..number_rows {
             let choice_index = rng.random_range(0..row_choices.len());
@@ -101,7 +108,11 @@ where
     }
 
     let mut values = Vec::with_capacity(number_rows);
-    for _ in 0..number_rows {
+    for row in 0..number_rows {
+        if null_probability.is_null(row, &mut rng, name)? {
+            values.push(None);
+            continue;
+        }
         let choice_index = rng.random_range(0..row_choices.len());
         if row_choices.is_null(choice_index) {
             values.push(None);
@@ -146,14 +157,19 @@ impl ScalarUDFImpl for Choice {
     fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
         match arg_types {
             [DataType::List(field)] => Ok(field.data_type().clone()),
+            [DataType::List(field), DataType::Float64] => Ok(field.data_type().clone()),
             [data_type] => plan_err!("{} expects a List argument, got {data_type}", self.name()),
-            _ => plan_err!("{} expects exactly one argument", self.name()),
+            [_, data_type] => plan_err!(
+                "{} expects a Float64 null probability, got {data_type}",
+                self.name()
+            ),
+            _ => plan_err!("{} expects one or two arguments", self.name()),
         }
     }
 
     fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<Arc<Field>> {
         match args.arg_fields {
-            [field] => match field.data_type() {
+            [field] | [field, _] => match field.data_type() {
                 DataType::List(item_field) => Ok(Arc::new(Field::new(
                     self.name(),
                     item_field.data_type().clone(),
@@ -161,8 +177,20 @@ impl ScalarUDFImpl for Choice {
                 ))),
                 data_type => plan_err!("{} expects a List argument, got {data_type}", self.name()),
             },
-            _ => plan_err!("{} expects exactly one argument", self.name()),
+            _ => plan_err!("{} expects one or two arguments", self.name()),
         }
+    }
+
+    fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
+        if arg_types.len() != 1 && arg_types.len() != 2 {
+            return exec_err!("{} expects one or two arguments", self.name());
+        }
+
+        let mut coerced = vec![arg_types[0].clone()];
+        if let Some(null_probability_type) = arg_types.get(1) {
+            coerced.push(coerce_float64_argument(null_probability_type, self.name())?);
+        }
+        Ok(coerced)
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
@@ -172,7 +200,9 @@ impl ScalarUDFImpl for Choice {
             return_field,
             ..
         } = args;
-        let [choices] = exact_args(args, self.name())?;
+        let ([choices], null_probability) = optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
 
         if number_rows == 0 {
             return Ok(ColumnarValue::Array(new_empty_array(
@@ -192,18 +222,22 @@ impl ScalarUDFImpl for Choice {
                 return internal_err!("{} return field does not match list item type", self.name());
             }
             return match return_field.data_type() {
-                DataType::Utf8 => choose_from_scalar_utf8_list(list, number_rows, self.name()),
+                DataType::Utf8 => {
+                    choose_from_scalar_utf8_list(list, number_rows, self.name(), &null_probability)
+                }
                 DataType::Int64 => choose_from_scalar_primitive_list::<Int64Type>(
                     list,
                     return_field.data_type(),
                     number_rows,
                     self.name(),
+                    &null_probability,
                 ),
                 DataType::Float64 => choose_from_scalar_primitive_list::<Float64Type>(
                     list,
                     return_field.data_type(),
                     number_rows,
                     self.name(),
+                    &null_probability,
                 ),
                 _ => unreachable!("matches! limits choice scalar specializations"),
             };
@@ -229,6 +263,10 @@ impl ScalarUDFImpl for Choice {
             let row_choices = choices.value(row);
             if row_choices.is_empty() {
                 return exec_err!("{} requires at least one choice", self.name());
+            }
+            if null_probability.is_null(row, &mut rng, self.name())? {
+                values.push(ScalarValue::try_from(return_field.data_type())?);
+                continue;
             }
 
             let choice_index = rng.random_range(0..row_choices.len());

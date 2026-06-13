@@ -1,8 +1,9 @@
 //! Date32 random generator.
 //!
-//! `randgen_date32(min, max)` samples a date from the inclusive day range
-//! `min..=max`. Null bounds produce null output for that row. Non-null bounds
-//! must satisfy `min <= max`.
+//! `randgen_date32(min, max[, null_probability])` samples a date from the
+//! inclusive day range `min..=max`. Null bounds produce null output for that
+//! row. Non-null bounds must satisfy `min <= max`. The optional null
+//! probability must be finite and within `0.0..=1.0`.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -11,19 +12,27 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::Date32Type;
 use arrow_schema::DataType;
 use datafusion_common::{Result, ScalarValue};
-use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
+};
 
-use crate::randgen::utils::{primitive_range_array, primitive_range_scalar_array, two_array_args};
+use crate::randgen::utils::{
+    NullProbability, optional_args, primitive_range_array, primitive_range_scalar_array,
+    two_array_args,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// `ScalarUDFImpl` for `randgen_date32(min, max)`.
+/// `ScalarUDFImpl` for `randgen_date32(min, max[, null_probability])`.
 pub struct Date32 {
     signature: &'static Signature,
 }
 
 static DATE32_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
-    Signature::exact(
-        vec![DataType::Date32, DataType::Date32],
+    Signature::one_of(
+        vec![
+            TypeSignature::Exact(vec![DataType::Date32, DataType::Date32]),
+            TypeSignature::Exact(vec![DataType::Date32, DataType::Date32, DataType::Float64]),
+        ],
         Volatility::Volatile,
     )
 });
@@ -49,9 +58,16 @@ impl Date32 {
         min: Option<i32>,
         max: Option<i32>,
         number_rows: usize,
+        null_probability: &NullProbability,
     ) -> Result<ColumnarValue> {
         Ok(ColumnarValue::Array(Arc::new(
-            primitive_range_scalar_array::<Date32Type>(min, max, number_rows, self.name())?,
+            primitive_range_scalar_array::<Date32Type>(
+                min,
+                max,
+                number_rows,
+                self.name(),
+                null_probability,
+            )?,
         )))
     }
 }
@@ -77,13 +93,15 @@ impl ScalarUDFImpl for Date32 {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [min, max] = crate::randgen::utils::exact_args(args, self.name())?;
+        let ([min, max], null_probability) = optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
         if let (
             ColumnarValue::Scalar(ScalarValue::Date32(min)),
             ColumnarValue::Scalar(ScalarValue::Date32(max)),
         ) = (&min, &max)
         {
-            return self.invoke_scalar_args(*min, *max, number_rows);
+            return self.invoke_scalar_args(*min, *max, number_rows, &null_probability);
         }
 
         let (min_array, max_array) = two_array_args(
@@ -101,6 +119,7 @@ impl ScalarUDFImpl for Date32 {
             max_values,
             number_rows,
             self.name(),
+            &null_probability,
         )?)))
     }
 }

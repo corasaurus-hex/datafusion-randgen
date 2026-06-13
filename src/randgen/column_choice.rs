@@ -1,9 +1,10 @@
 //! Parquet-backed column choice random generator.
 //!
-//! `randgen_column_choice(source_path, column_name)` samples with replacement
-//! from the distinct non-null values in an unsigned integer Parquet column.
-//! Both arguments must be scalar strings known at planning time. The UDF reads
-//! the source as Parquet regardless of extension.
+//! `randgen_column_choice(source_path, column_name[, null_probability])`
+//! samples with replacement from the distinct non-null values in an unsigned
+//! integer Parquet column. The path and column arguments must be scalar strings
+//! known at planning time. The UDF reads the source as Parquet regardless of
+//! extension.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -26,7 +27,9 @@ use parquet::errors::ParquetError;
 use rand::Rng;
 use roaring::{RoaringBitmap, RoaringTreemap};
 
-/// `ScalarUDFImpl` for `randgen_column_choice(source_path, column_name)`.
+use crate::randgen::utils::{NullProbability, coerce_float64_argument, optional_args};
+
+/// `ScalarUDFImpl` for `randgen_column_choice(source_path, column_name[, null_probability])`.
 #[derive(Debug)]
 pub struct ColumnChoice {
     signature: &'static Signature,
@@ -34,7 +37,7 @@ pub struct ColumnChoice {
 }
 
 static COLUMN_CHOICE_SIGNATURE: LazyLock<Signature> =
-    LazyLock::new(|| Signature::exact(vec![DataType::Utf8, DataType::Utf8], Volatility::Volatile));
+    LazyLock::new(|| Signature::user_defined(Volatility::Volatile));
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
@@ -101,7 +104,12 @@ impl ColumnValues {
         }
     }
 
-    fn sample(&self, number_rows: usize, name: &str) -> Result<ColumnarValue> {
+    fn sample(
+        &self,
+        number_rows: usize,
+        name: &str,
+        null_probability: &NullProbability,
+    ) -> Result<ColumnarValue> {
         if self.len() == 0 {
             return exec_err!("{name} requires at least one non-null source value");
         }
@@ -111,28 +119,36 @@ impl ColumnValues {
             Self::UInt32(values) => {
                 let len = values.len();
                 let mut output = Vec::with_capacity(number_rows);
-                for _ in 0..number_rows {
+                for row in 0..number_rows {
+                    if null_probability.is_null(row, &mut rng, name)? {
+                        output.push(None);
+                        continue;
+                    }
                     let rank = rng.random_range(0..len);
                     let value = values.select(rank as u32).ok_or_else(|| {
                         DataFusionError::Execution(format!(
                             "{name} failed to select source value at rank {rank}"
                         ))
                     })?;
-                    output.push(value);
+                    output.push(Some(value));
                 }
                 Ok(ColumnarValue::Array(Arc::new(UInt32Array::from(output))))
             }
             Self::UInt64(values) => {
                 let len = values.len();
                 let mut output = Vec::with_capacity(number_rows);
-                for _ in 0..number_rows {
+                for row in 0..number_rows {
+                    if null_probability.is_null(row, &mut rng, name)? {
+                        output.push(None);
+                        continue;
+                    }
                     let rank = rng.random_range(0..len);
                     let value = values.select(rank).ok_or_else(|| {
                         DataFusionError::Execution(format!(
                             "{name} failed to select source value at rank {rank}"
                         ))
                     })?;
-                    output.push(value);
+                    output.push(Some(value));
                 }
                 Ok(ColumnarValue::Array(Arc::new(UInt64Array::from(output))))
             }
@@ -316,8 +332,8 @@ impl ScalarUDFImpl for ColumnChoice {
     }
 
     fn return_field_from_args(&self, args: ReturnFieldArgs) -> Result<FieldRef> {
-        if args.arg_fields.len() != 2 {
-            return plan_err!("{} expects exactly two arguments", self.name());
+        if args.arg_fields.len() != 2 && args.arg_fields.len() != 3 {
+            return plan_err!("{} expects two or three arguments", self.name());
         }
 
         let path = scalar_string_arg(args.scalar_arguments, 0, "source_path", self.name())?;
@@ -327,7 +343,23 @@ impl ScalarUDFImpl for ColumnChoice {
             ColumnKind::UInt64 => DataType::UInt64,
         };
 
-        Ok(Arc::new(Field::new(self.name(), data_type, false)))
+        Ok(Arc::new(Field::new(
+            self.name(),
+            data_type,
+            args.arg_fields.len() == 3,
+        )))
+    }
+
+    fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
+        if arg_types.len() != 2 && arg_types.len() != 3 {
+            return exec_err!("{} expects two or three arguments", self.name());
+        }
+
+        let mut coerced = vec![DataType::Utf8, DataType::Utf8];
+        if let Some(null_probability_type) = arg_types.get(2) {
+            coerced.push(coerce_float64_argument(null_probability_type, self.name())?);
+        }
+        Ok(coerced)
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
@@ -337,7 +369,9 @@ impl ScalarUDFImpl for ColumnChoice {
             return_field,
             ..
         } = args;
-        let [path, column] = crate::randgen::utils::exact_args(args, self.name())?;
+        let ([path, column], null_probability) = optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
         let path = columnar_scalar_string_arg(&path, "source_path", self.name())?;
         let column = columnar_scalar_string_arg(&column, "column_name", self.name())?;
         let key = file_key(path, column, self.name())?;
@@ -369,6 +403,6 @@ impl ScalarUDFImpl for ColumnChoice {
             );
         }
 
-        values.sample(number_rows, self.name())
+        values.sample(number_rows, self.name(), &null_probability)
     }
 }

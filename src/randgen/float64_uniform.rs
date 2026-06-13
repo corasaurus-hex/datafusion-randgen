@@ -1,8 +1,9 @@
 //! Float64 uniform random generator.
 //!
-//! `randgen_float64_uniform(min, max)` samples from the inclusive range
-//! `min..=max`. Bounds must be finite, the span must be finite, and `min` must
-//! not exceed `max`. Null bounds produce null output for that row.
+//! `randgen_float64_uniform(min, max[, null_probability])` samples from the
+//! inclusive range `min..=max`. Bounds must be finite, the span must be finite,
+//! and `min` must not exceed `max`. Null bounds produce null output for that
+//! row. The optional null probability must be finite and within `0.0..=1.0`.
 
 use std::any::Any;
 use std::sync::LazyLock;
@@ -12,21 +13,30 @@ use arrow_array::types::Float64Type;
 use arrow_array::{Array, Float64Array};
 use arrow_schema::DataType;
 use datafusion_common::{Result, ScalarValue, exec_err};
-use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
+};
 use rand::Rng;
 use std::sync::Arc;
 
-use crate::randgen::utils::two_array_args;
+use crate::randgen::utils::{NullProbability, optional_args, two_array_args};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// `ScalarUDFImpl` for `randgen_float64_uniform(min, max)`.
+/// `ScalarUDFImpl` for `randgen_float64_uniform(min, max[, null_probability])`.
 pub struct Float64Uniform {
     signature: &'static Signature,
 }
 
 static FLOAT64_UNIFORM_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
-    Signature::exact(
-        vec![DataType::Float64, DataType::Float64],
+    Signature::one_of(
+        vec![
+            TypeSignature::Exact(vec![DataType::Float64, DataType::Float64]),
+            TypeSignature::Exact(vec![
+                DataType::Float64,
+                DataType::Float64,
+                DataType::Float64,
+            ]),
+        ],
         Volatility::Volatile,
     )
 });
@@ -52,6 +62,7 @@ impl Float64Uniform {
         min: Option<f64>,
         max: Option<f64>,
         number_rows: usize,
+        null_probability: &NullProbability,
     ) -> Result<ColumnarValue> {
         let mut rng = rand::rng();
         if let (Some(min), Some(max)) = (min, max) {
@@ -72,13 +83,17 @@ impl Float64Uniform {
             }
 
             let mut values = Vec::with_capacity(number_rows);
-            for _ in 0..number_rows {
+            for row in 0..number_rows {
                 let value = if min == max {
                     min
                 } else {
                     rng.random_range(min..=max)
                 };
-                values.push(value);
+                if null_probability.is_null(row, &mut rng, self.name())? {
+                    values.push(None);
+                } else {
+                    values.push(Some(value));
+                }
             }
 
             return Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))));
@@ -110,13 +125,15 @@ impl ScalarUDFImpl for Float64Uniform {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [min, max] = crate::randgen::utils::exact_args(args, self.name())?;
+        let ([min, max], null_probability) = optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
         if let (
             ColumnarValue::Scalar(ScalarValue::Float64(min)),
             ColumnarValue::Scalar(ScalarValue::Float64(max)),
         ) = (&min, &max)
         {
-            return self.invoke_scalar_args(*min, *max, number_rows);
+            return self.invoke_scalar_args(*min, *max, number_rows, &null_probability);
         }
 
         let (min_array, max_array) = two_array_args(
@@ -130,7 +147,10 @@ impl ScalarUDFImpl for Float64Uniform {
         let max_values = max_array.as_primitive::<Float64Type>();
 
         let mut rng = rand::rng();
-        if min_values.null_count() == 0 && max_values.null_count() == 0 {
+        if min_values.null_count() == 0
+            && max_values.null_count() == 0
+            && matches!(null_probability, NullProbability::None)
+        {
             let mut values = Vec::with_capacity(number_rows);
             for row in 0..number_rows {
                 let min = min_values.value(row);
@@ -192,7 +212,11 @@ impl ScalarUDFImpl for Float64Uniform {
             } else {
                 rng.random_range(min..=max)
             };
-            values.push(Some(value));
+            if null_probability.is_null(row, &mut rng, self.name())? {
+                values.push(None);
+            } else {
+                values.push(Some(value));
+            }
         }
 
         Ok(ColumnarValue::Array(Arc::new(Float64Array::from(values))))

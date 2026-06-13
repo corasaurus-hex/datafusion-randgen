@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use arrow_array::{ArrayRef, Int64Array, RecordBatch, UInt32Array, UInt64Array};
+use arrow_array::{Array, ArrayRef, Int64Array, RecordBatch, UInt32Array, UInt64Array};
 use arrow_schema::{DataType, Field, Schema};
 use datafusion::prelude::SessionContext;
 use datafusion_randgen::{all_udfs, column_choice_udf};
@@ -171,6 +171,44 @@ async fn all_udfs_registers_column_choice_when_feature_is_enabled() {
     let batches = ctx.sql(&sql).await.unwrap().collect().await.unwrap();
 
     assert_eq!(column_values_u32(&batches).len(), 8);
+}
+
+#[tokio::test]
+async fn optional_null_probability_can_null_column_choice_values() {
+    let path = write_parquet(
+        "nullable_column_choice",
+        Field::new("id", DataType::UInt32, false),
+        Arc::new(UInt32Array::from(vec![1, 2, 3])),
+    );
+    let sql = format!(
+        "SELECT randgen_column_choice({}, 'id', 1.0) AS id FROM generate_series(1, 8)",
+        path_sql(&path)
+    );
+
+    let batches = collect_with_column_choice(&sql).await;
+
+    assert_eq!(batches[0].schema().field(0).data_type(), &DataType::UInt32);
+    for batch in batches {
+        let column = batch.column(0);
+        assert_eq!(column.null_count(), column.len());
+    }
+}
+
+#[tokio::test]
+async fn optional_null_probability_rejects_bad_column_choice_values() {
+    let path = write_parquet(
+        "bad_nullable_column_choice",
+        Field::new("id", DataType::UInt32, false),
+        Arc::new(UInt32Array::from(vec![1, 2, 3])),
+    );
+    let sql = format!(
+        "SELECT randgen_column_choice({}, 'id', -0.1) AS id FROM generate_series(1, 1)",
+        path_sql(&path)
+    );
+
+    let error = collect_error(&sql).await;
+
+    assert!(error.contains("requires probability between 0.0 and 1.0 inclusive"));
 }
 
 #[tokio::test]

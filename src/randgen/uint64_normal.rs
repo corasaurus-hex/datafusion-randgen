@@ -1,10 +1,11 @@
 //! UInt64 normal-distribution random generator.
 //!
-//! `randgen_uint64_normal(min, max, mean, stddev)` samples an integer normal
-//! distribution centered on `mean` and truncated to the inclusive `UInt64`
-//! range `min..=max`. The mean may be outside the output range. A null argument
-//! produces null output for that row. Integer arguments may be `UInt64` values
-//! or nonnegative signed integer values.
+//! `randgen_uint64_normal(min, max, mean, stddev[, null_probability])` samples
+//! an integer normal distribution centered on `mean` and truncated to the
+//! inclusive `UInt64` range `min..=max`. The mean may be outside the output
+//! range. A null required argument produces null output for that row. Integer
+//! arguments may be `UInt64` values or nonnegative signed integer values. The
+//! optional null probability must be finite and within `0.0..=1.0`.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -13,15 +14,18 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::{Float64Type, UInt64Type};
 use arrow_array::{Array, UInt64Array};
 use arrow_schema::DataType;
-use datafusion_common::{Result, ScalarValue, exec_err};
+use datafusion_common::{Result, ScalarValue};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
 use rand::Rng;
 
 use crate::randgen::integer_normal::RoundedIntegerNormalSampler;
-use crate::randgen::utils::{coerce_float64_argument, coerce_uint64_argument, four_array_args};
+use crate::randgen::utils::{
+    NullProbability, coerce_float64_argument, coerce_optional_null_probability,
+    coerce_uint64_argument, four_array_args, optional_args,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// `ScalarUDFImpl` for `randgen_uint64_normal(min, max, mean, stddev)`.
+/// `ScalarUDFImpl` for `randgen_uint64_normal(min, max, mean, stddev[, null_probability])`.
 pub struct UInt64Normal {
     signature: &'static Signature,
 }
@@ -70,13 +74,18 @@ impl UInt64Normal {
         mean: Option<u64>,
         stddev: Option<f64>,
         number_rows: usize,
+        null_probability: &NullProbability,
     ) -> Result<ColumnarValue> {
         let mut rng = rand::rng();
         if let (Some(min), Some(max), Some(mean), Some(stddev)) = (min, max, mean, stddev) {
             let sampler = sampler_for_range(min, max, mean, stddev, self.name())?;
             let mut values = Vec::with_capacity(number_rows);
-            for _ in 0..number_rows {
-                values.push(sample_uint64(&mut rng, &sampler, self.name())?);
+            for row in 0..number_rows {
+                if null_probability.is_null(row, &mut rng, self.name())? {
+                    values.push(None);
+                } else {
+                    values.push(Some(sample_uint64(&mut rng, &sampler, self.name())?));
+                }
             }
 
             return Ok(ColumnarValue::Array(Arc::new(UInt64Array::from(values))));
@@ -106,32 +115,23 @@ impl ScalarUDFImpl for UInt64Normal {
     }
 
     fn coerce_types(&self, arg_types: &[DataType]) -> Result<Vec<DataType>> {
-        if arg_types.len() != 4 {
-            let argument = if arg_types.len() == 1 {
-                "argument"
-            } else {
-                "arguments"
-            };
-            return exec_err!(
-                "{} expects exactly 4 arguments, got {} {argument}",
-                self.name(),
-                arg_types.len()
-            );
-        }
-
-        Ok(vec![
-            coerce_uint64_argument(&arg_types[0], self.name())?,
-            coerce_uint64_argument(&arg_types[1], self.name())?,
-            coerce_uint64_argument(&arg_types[2], self.name())?,
-            coerce_float64_argument(&arg_types[3], self.name())?,
-        ])
+        coerce_optional_null_probability(arg_types, 4, self.name(), |arg_types| {
+            Ok(vec![
+                coerce_uint64_argument(&arg_types[0], self.name())?,
+                coerce_uint64_argument(&arg_types[1], self.name())?,
+                coerce_uint64_argument(&arg_types[2], self.name())?,
+                coerce_float64_argument(&arg_types[3], self.name())?,
+            ])
+        })
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [min, max, mean, stddev] = crate::randgen::utils::exact_args(args, self.name())?;
+        let ([min, max, mean, stddev], null_probability) = optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
         if let (
             ColumnarValue::Scalar(ScalarValue::UInt64(min)),
             ColumnarValue::Scalar(ScalarValue::UInt64(max)),
@@ -139,7 +139,14 @@ impl ScalarUDFImpl for UInt64Normal {
             ColumnarValue::Scalar(ScalarValue::Float64(stddev)),
         ) = (&min, &max, &mean, &stddev)
         {
-            return self.invoke_scalar_args(*min, *max, *mean, *stddev, number_rows);
+            return self.invoke_scalar_args(
+                *min,
+                *max,
+                *mean,
+                *stddev,
+                number_rows,
+                &null_probability,
+            );
         }
 
         let expected = "UInt64, UInt64, UInt64, Float64 arguments";
@@ -162,6 +169,7 @@ impl ScalarUDFImpl for UInt64Normal {
             && max_values.null_count() == 0
             && mean_values.null_count() == 0
             && stddev_values.null_count() == 0
+            && matches!(null_probability, NullProbability::None)
         {
             let mut values = Vec::with_capacity(number_rows);
             for row in 0..number_rows {
@@ -192,7 +200,11 @@ impl ScalarUDFImpl for UInt64Normal {
             let mean = mean_values.value(row);
             let stddev = stddev_values.value(row);
             let sampler = sampler_for_range(min, max, mean, stddev, self.name())?;
-            values.push(Some(sample_uint64(&mut rng, &sampler, self.name())?));
+            if null_probability.is_null(row, &mut rng, self.name())? {
+                values.push(None);
+            } else {
+                values.push(Some(sample_uint64(&mut rng, &sampler, self.name())?));
+            }
         }
 
         Ok(ColumnarValue::Array(Arc::new(UInt64Array::from(values))))

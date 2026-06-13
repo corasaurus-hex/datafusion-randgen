@@ -1,9 +1,10 @@
 //! Int64 normal-distribution random generator.
 //!
-//! `randgen_int64_normal(min, max, mean, stddev)` samples an integer normal
-//! distribution centered on `mean` and truncated to the inclusive `Int64`
-//! range `min..=max`. The mean may be outside the output range. A null argument
-//! produces null output for that row.
+//! `randgen_int64_normal(min, max, mean, stddev[, null_probability])` samples
+//! an integer normal distribution centered on `mean` and truncated to the
+//! inclusive `Int64` range `min..=max`. The mean may be outside the output
+//! range. A null required argument produces null output for that row. The
+//! optional null probability must be finite and within `0.0..=1.0`.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -13,25 +14,36 @@ use arrow_array::types::{Float64Type, Int64Type};
 use arrow_array::{Array, Int64Array};
 use arrow_schema::DataType;
 use datafusion_common::{Result, ScalarValue};
-use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
+};
 use rand::Rng;
 
 use crate::randgen::integer_normal::RoundedIntegerNormalSampler;
-use crate::randgen::utils::four_array_args;
+use crate::randgen::utils::{NullProbability, four_array_args, optional_args};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// `ScalarUDFImpl` for `randgen_int64_normal(min, max, mean, stddev)`.
+/// `ScalarUDFImpl` for `randgen_int64_normal(min, max, mean, stddev[, null_probability])`.
 pub struct Int64Normal {
     signature: &'static Signature,
 }
 
 static INT64_NORMAL_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
-    Signature::exact(
+    Signature::one_of(
         vec![
-            DataType::Int64,
-            DataType::Int64,
-            DataType::Int64,
-            DataType::Float64,
+            TypeSignature::Exact(vec![
+                DataType::Int64,
+                DataType::Int64,
+                DataType::Int64,
+                DataType::Float64,
+            ]),
+            TypeSignature::Exact(vec![
+                DataType::Int64,
+                DataType::Int64,
+                DataType::Int64,
+                DataType::Float64,
+                DataType::Float64,
+            ]),
         ],
         Volatility::Volatile,
     )
@@ -78,13 +90,18 @@ impl Int64Normal {
         mean: Option<i64>,
         stddev: Option<f64>,
         number_rows: usize,
+        null_probability: &NullProbability,
     ) -> Result<ColumnarValue> {
         let mut rng = rand::rng();
         if let (Some(min), Some(max), Some(mean), Some(stddev)) = (min, max, mean, stddev) {
             let sampler = sampler_for_range(min, max, mean, stddev, self.name())?;
             let mut values = Vec::with_capacity(number_rows);
-            for _ in 0..number_rows {
-                values.push(sample_int64(&mut rng, &sampler, self.name())?);
+            for row in 0..number_rows {
+                if null_probability.is_null(row, &mut rng, self.name())? {
+                    values.push(None);
+                } else {
+                    values.push(Some(sample_int64(&mut rng, &sampler, self.name())?));
+                }
             }
 
             return Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))));
@@ -116,7 +133,9 @@ impl ScalarUDFImpl for Int64Normal {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [min, max, mean, stddev] = crate::randgen::utils::exact_args(args, self.name())?;
+        let ([min, max, mean, stddev], null_probability) = optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
         if let (
             ColumnarValue::Scalar(ScalarValue::Int64(min)),
             ColumnarValue::Scalar(ScalarValue::Int64(max)),
@@ -124,7 +143,14 @@ impl ScalarUDFImpl for Int64Normal {
             ColumnarValue::Scalar(ScalarValue::Float64(stddev)),
         ) = (&min, &max, &mean, &stddev)
         {
-            return self.invoke_scalar_args(*min, *max, *mean, *stddev, number_rows);
+            return self.invoke_scalar_args(
+                *min,
+                *max,
+                *mean,
+                *stddev,
+                number_rows,
+                &null_probability,
+            );
         }
 
         let expected = "Int64, Int64, Int64, Float64 arguments";
@@ -147,6 +173,7 @@ impl ScalarUDFImpl for Int64Normal {
             && max_values.null_count() == 0
             && mean_values.null_count() == 0
             && stddev_values.null_count() == 0
+            && matches!(null_probability, NullProbability::None)
         {
             let mut values = Vec::with_capacity(number_rows);
             for row in 0..number_rows {
@@ -177,7 +204,11 @@ impl ScalarUDFImpl for Int64Normal {
             let mean = mean_values.value(row);
             let stddev = stddev_values.value(row);
             let sampler = sampler_for_range(min, max, mean, stddev, self.name())?;
-            values.push(Some(sample_int64(&mut rng, &sampler, self.name())?));
+            if null_probability.is_null(row, &mut rng, self.name())? {
+                values.push(None);
+            } else {
+                values.push(Some(sample_int64(&mut rng, &sampler, self.name())?));
+            }
         }
 
         Ok(ColumnarValue::Array(Arc::new(Int64Array::from(values))))

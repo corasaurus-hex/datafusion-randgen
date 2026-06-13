@@ -6,7 +6,7 @@ use arrow_array::types::{
 use arrow_schema::{DataType, TimeUnit};
 use datafusion_common::ScalarValue;
 use datafusion_randgen::{
-    Bool, Choice, Date32, Float64Normal, Float64Uniform, Int64Normal, Int64Uniform,
+    Bool, Choice, Date32, Float64Normal, Float64Uniform, Int64Normal, Int64Uniform, Nullable,
     TimestampMillisecond, UInt64Normal, UInt64Uniform, Utf8,
 };
 use proptest::prelude::*;
@@ -214,6 +214,28 @@ proptest! {
     }
 
     #[test]
+    fn nullable_outputs_original_value_or_null(probability in 0_u32..=1_000_000) {
+        let probability = probability as f64 / 1_000_000.0;
+        let values = primitive_values::<Int64Type>(&invoke_array(
+            &Nullable::new(),
+            vec![
+                scalar(ScalarValue::Int64(Some(7))),
+                scalar(ScalarValue::Float64(Some(probability))),
+            ],
+            DataType::Int64,
+            PROP_ROWS,
+        ));
+
+        prop_assert!(values.iter().all(|value| value.is_none() || *value == Some(7)));
+        if probability == 0.0 {
+            prop_assert!(values.iter().all(|value| *value == Some(7)));
+        }
+        if probability == 1.0 {
+            prop_assert!(values.iter().all(Option::is_none));
+        }
+    }
+
+    #[test]
     fn date32_outputs_stay_in_the_requested_range((min, max) in i32_range_strategy()) {
         let values = primitive_values::<Date32Type>(&invoke_array(
             &Date32::new(),
@@ -299,6 +321,145 @@ fn uniform_integer_udfs_handle_full_type_ranges() {
         512,
     ));
     assert!(uint64_values.iter().all(Option::is_some));
+}
+
+#[test]
+fn native_nullability_one_probability_outputs_nulls() {
+    let int64_uniform = primitive_values::<Int64Type>(&invoke_array(
+        &Int64Uniform::new(),
+        vec![
+            scalar(ScalarValue::Int64(Some(-10))),
+            scalar(ScalarValue::Int64(Some(10))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        DataType::Int64,
+        PROP_ROWS,
+    ));
+    assert!(int64_uniform.iter().all(Option::is_none));
+
+    let uint64_uniform = primitive_values::<UInt64Type>(&invoke_array(
+        &UInt64Uniform::new(),
+        vec![
+            scalar(ScalarValue::UInt64(Some(0))),
+            scalar(ScalarValue::UInt64(Some(10))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        DataType::UInt64,
+        PROP_ROWS,
+    ));
+    assert!(uint64_uniform.iter().all(Option::is_none));
+
+    let float64_uniform = primitive_values::<Float64Type>(&invoke_array(
+        &Float64Uniform::new(),
+        vec![
+            scalar(ScalarValue::Float64(Some(0.0))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        DataType::Float64,
+        PROP_ROWS,
+    ));
+    assert!(float64_uniform.iter().all(Option::is_none));
+
+    let float64_normal = primitive_values::<Float64Type>(&invoke_array(
+        &Float64Normal::new(),
+        vec![
+            scalar(ScalarValue::Float64(Some(0.0))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        DataType::Float64,
+        PROP_ROWS,
+    ));
+    assert!(float64_normal.iter().all(Option::is_none));
+
+    let int64_normal = primitive_values::<Int64Type>(&invoke_array(
+        &Int64Normal::new(),
+        vec![
+            scalar(ScalarValue::Int64(Some(-10))),
+            scalar(ScalarValue::Int64(Some(10))),
+            scalar(ScalarValue::Int64(Some(0))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        DataType::Int64,
+        PROP_ROWS,
+    ));
+    assert!(int64_normal.iter().all(Option::is_none));
+
+    let uint64_normal = primitive_values::<UInt64Type>(&invoke_array(
+        &UInt64Normal::new(),
+        vec![
+            scalar(ScalarValue::UInt64(Some(0))),
+            scalar(ScalarValue::UInt64(Some(10))),
+            scalar(ScalarValue::UInt64(Some(5))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        DataType::UInt64,
+        PROP_ROWS,
+    ));
+    assert!(uint64_normal.iter().all(Option::is_none));
+
+    let bools = bool_values(&invoke_array(
+        &Bool::new(),
+        vec![
+            scalar(ScalarValue::Float64(Some(0.5))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        DataType::Boolean,
+        PROP_ROWS,
+    ));
+    assert!(bools.iter().all(Option::is_none));
+
+    let strings = string_values(&invoke_array(
+        &Utf8::new(),
+        vec![
+            scalar(ScalarValue::Utf8(Some("ABC".to_owned()))),
+            scalar(ScalarValue::Int64(Some(1))),
+            scalar(ScalarValue::Int64(Some(8))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        DataType::Utf8,
+        PROP_ROWS,
+    ));
+    assert!(strings.iter().all(Option::is_none));
+
+    let choices = string_values(&invoke_array(
+        &Choice::new(),
+        vec![
+            scalar_choice_utf8(&["UTC", "America/New_York"]),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        DataType::Utf8,
+        PROP_ROWS,
+    ));
+    assert!(choices.iter().all(Option::is_none));
+
+    let dates = primitive_values::<Date32Type>(&invoke_array(
+        &Date32::new(),
+        vec![
+            scalar(ScalarValue::Date32(Some(0))),
+            scalar(ScalarValue::Date32(Some(10))),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        DataType::Date32,
+        PROP_ROWS,
+    ));
+    assert!(dates.iter().all(Option::is_none));
+
+    let timestamp_type = DataType::Timestamp(TimeUnit::Millisecond, None);
+    let timestamps = primitive_values::<TimestampMillisecondType>(&invoke_array(
+        &TimestampMillisecond::new(),
+        vec![
+            scalar(ScalarValue::TimestampMillisecond(Some(0), None)),
+            scalar(ScalarValue::TimestampMillisecond(Some(10), None)),
+            scalar(ScalarValue::Float64(Some(1.0))),
+        ],
+        timestamp_type,
+        PROP_ROWS,
+    ));
+    assert!(timestamps.iter().all(Option::is_none));
 }
 
 fn stress_public_udfs(number_rows: usize) {
@@ -442,6 +603,27 @@ fn stress_public_udfs(number_rows: usize) {
         observed_choices,
         HashSet::from(["UTC", "America/New_York", "Europe/London"])
     );
+
+    let nullable_values = primitive_values::<Int64Type>(&invoke_array(
+        &Nullable::new(),
+        vec![
+            scalar(ScalarValue::Int64(Some(7))),
+            scalar(ScalarValue::Float64(Some(0.25))),
+        ],
+        DataType::Int64,
+        number_rows,
+    ));
+    assert!(
+        nullable_values
+            .iter()
+            .all(|value| value.is_none() || *value == Some(7))
+    );
+    let null_rate = nullable_values
+        .iter()
+        .filter(|value| value.is_none())
+        .count() as f64
+        / nullable_values.len() as f64;
+    assert!((0.20..=0.30).contains(&null_rate));
 
     let date_values = primitive_values::<Date32Type>(&invoke_array(
         &Date32::new(),

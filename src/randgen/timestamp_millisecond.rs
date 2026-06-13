@@ -1,8 +1,9 @@
 //! Millisecond timestamp random generator.
 //!
-//! `randgen_timestamp_millisecond(min, max)` samples from the inclusive
-//! timestamp range `min..=max`. Arguments must use millisecond precision and
-//! matching timezones. Null bounds produce null output for that row.
+//! `randgen_timestamp_millisecond(min, max[, null_probability])` samples from
+//! the inclusive timestamp range `min..=max`. Arguments must use millisecond
+//! precision and matching timezones. Null bounds produce null output for that
+//! row. The optional null probability must be finite and within `0.0..=1.0`.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
@@ -17,10 +18,12 @@ use datafusion_expr::{
     Volatility,
 };
 
-use crate::randgen::utils::{exact_args, primitive_range_array, primitive_range_scalar_array};
+use crate::randgen::utils::{
+    NullProbability, optional_args, primitive_range_array, primitive_range_scalar_array,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// `ScalarUDFImpl` for `randgen_timestamp_millisecond(min, max)`.
+/// `ScalarUDFImpl` for `randgen_timestamp_millisecond(min, max[, null_probability])`.
 pub struct TimestampMillisecond {
     signature: &'static Signature,
 }
@@ -41,6 +44,16 @@ static TIMESTAMP_MILLISECOND_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
             TypeSignature::Exact(vec![
                 TIMESTAMP_MILLISECOND_TIMEZONE_TYPE.clone(),
                 TIMESTAMP_MILLISECOND_TIMEZONE_TYPE.clone(),
+            ]),
+            TypeSignature::Exact(vec![
+                TIMESTAMP_MILLISECOND_TYPE.clone(),
+                TIMESTAMP_MILLISECOND_TYPE.clone(),
+                DataType::Float64,
+            ]),
+            TypeSignature::Exact(vec![
+                TIMESTAMP_MILLISECOND_TIMEZONE_TYPE.clone(),
+                TIMESTAMP_MILLISECOND_TIMEZONE_TYPE.clone(),
+                DataType::Float64,
             ]),
         ],
         Volatility::Volatile,
@@ -90,12 +103,14 @@ impl TimestampMillisecond {
         max: Option<i64>,
         timezone: Option<Arc<str>>,
         number_rows: usize,
+        null_probability: &NullProbability,
     ) -> Result<ColumnarValue> {
         let values = primitive_range_scalar_array::<TimestampMillisecondType>(
             min,
             max,
             number_rows,
             self.name(),
+            null_probability,
         )?;
         Ok(ColumnarValue::Array(Arc::new(
             values.with_timezone_opt(timezone),
@@ -117,17 +132,22 @@ impl ScalarUDFImpl for TimestampMillisecond {
     }
 
     fn return_type(&self, arg_types: &[DataType]) -> Result<DataType> {
-        let [min_type, max_type] = arg_types else {
-            return plan_err!("{} expects exactly two arguments", self.name());
-        };
-        timestamp_millisecond_type(min_type, max_type, self.name())
+        if arg_types.len() != 2 && arg_types.len() != 3 {
+            return plan_err!("{} expects two or three arguments", self.name());
+        }
+        if arg_types.len() == 3 && arg_types[2] != DataType::Float64 {
+            return plan_err!("{} expects Float64 null probability", self.name());
+        }
+        timestamp_millisecond_type(&arg_types[0], &arg_types[1], self.name())
     }
 
     fn invoke_with_args(&self, args: ScalarFunctionArgs) -> Result<ColumnarValue> {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [min, max] = exact_args(args, self.name())?;
+        let ([min, max], null_probability) = optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
 
         let output_type =
             timestamp_millisecond_type(&min.data_type(), &max.data_type(), self.name())?;
@@ -140,7 +160,13 @@ impl ScalarUDFImpl for TimestampMillisecond {
             let DataType::Timestamp(TimeUnit::Millisecond, timezone) = output_type else {
                 unreachable!("timestamp_millisecond_type only returns millisecond timestamps");
             };
-            return self.invoke_scalar_args(*min_value, *max_value, timezone, number_rows);
+            return self.invoke_scalar_args(
+                *min_value,
+                *max_value,
+                timezone,
+                number_rows,
+                &null_probability,
+            );
         }
 
         let min_array = min.into_array_of_size(number_rows)?;
@@ -148,7 +174,13 @@ impl ScalarUDFImpl for TimestampMillisecond {
         let min_values = min_array.as_primitive::<TimestampMillisecondType>();
         let max_values = max_array.as_primitive::<TimestampMillisecondType>();
 
-        let values = primitive_range_array(min_values, max_values, number_rows, self.name())?;
+        let values = primitive_range_array(
+            min_values,
+            max_values,
+            number_rows,
+            self.name(),
+            &null_probability,
+        )?;
         let DataType::Timestamp(TimeUnit::Millisecond, timezone) = output_type else {
             unreachable!("timestamp_millisecond_type only returns millisecond timestamps");
         };

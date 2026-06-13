@@ -3,7 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use arrow_array::{
-    ArrayRef, Date32Array, Float64Array, Int64Array, TimestampMillisecondArray, UInt64Array,
+    ArrayRef, Date32Array, Float64Array, Int64Array, StringArray, TimestampMillisecondArray,
+    UInt64Array,
 };
 use arrow_schema::{DataType, Field, TimeUnit};
 use criterion::measurement::WallTime;
@@ -13,7 +14,7 @@ use criterion::{
 use datafusion_common::{ScalarValue, config::ConfigOptions};
 use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl};
 use datafusion_randgen::{
-    Bool, Choice, Date32, Float64Normal, Float64Uniform, Int64Normal, Int64Uniform,
+    Bool, Choice, Date32, Float64Normal, Float64Uniform, Int64Normal, Int64Uniform, Nullable,
     TimestampMillisecond, UInt64Normal, UInt64Uniform, Utf8,
 };
 
@@ -325,6 +326,45 @@ fn bench_udfs(c: &mut Criterion) {
         vec![choice_float64_values.clone()],
         DataType::Float64,
         "randgen_choice",
+    );
+
+    let nullable_value = ColumnarValue::Array(array(Int64Array::from(vec![Some(7_i64); ROWS])));
+    let nullable_probability =
+        ColumnarValue::Array(array(Float64Array::from(vec![Some(0.25_f64); ROWS])));
+    let nullable_value_scalar = ColumnarValue::Scalar(ScalarValue::Int64(Some(7)));
+    let nullable_probability_scalar = ColumnarValue::Scalar(ScalarValue::Float64(Some(0.25)));
+    let nullable = Nullable::new();
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_nullable_int64",
+        &nullable,
+        vec![nullable_value.clone(), nullable_probability.clone()],
+        vec![
+            nullable_value_scalar.clone(),
+            nullable_probability_scalar.clone(),
+        ],
+        DataType::Int64,
+        "randgen_nullable",
+    );
+
+    let nullable_utf8_value =
+        ColumnarValue::Array(array(StringArray::from(vec![
+            Some("America/New_York");
+            ROWS
+        ])));
+    let nullable_utf8_value_scalar =
+        ColumnarValue::Scalar(ScalarValue::Utf8(Some("America/New_York".to_owned())));
+    bench_array_scalar_pair(
+        &mut group,
+        "randgen_nullable_utf8",
+        &nullable,
+        vec![nullable_utf8_value.clone(), nullable_probability.clone()],
+        vec![
+            nullable_utf8_value_scalar.clone(),
+            nullable_probability_scalar.clone(),
+        ],
+        DataType::Utf8,
+        "randgen_nullable",
     );
 
     let date_min = ColumnarValue::Array(array(Date32Array::from(vec![Some(19_723_i32); ROWS])));

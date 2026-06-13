@@ -1,8 +1,9 @@
 //! Int64 uniform random generator.
 //!
-//! `randgen_int64_uniform(min, max)` samples from the inclusive integer range
-//! `min..=max`. Null bounds produce null output for that row. Non-null bounds
-//! must satisfy `min <= max`.
+//! `randgen_int64_uniform(min, max[, null_probability])` samples from the
+//! inclusive integer range `min..=max`. Null bounds produce null output for
+//! that row. Non-null bounds must satisfy `min <= max`. The optional null
+//! probability must be finite and within `0.0..=1.0`.
 
 use std::any::Any;
 
@@ -10,19 +11,30 @@ use arrow_array::cast::AsArray;
 use arrow_array::types::Int64Type;
 use arrow_schema::DataType;
 use datafusion_common::{Result, ScalarValue};
-use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
+};
 use std::sync::{Arc, LazyLock};
 
-use crate::randgen::utils::{primitive_range_array, primitive_range_scalar_array, two_array_args};
+use crate::randgen::utils::{
+    NullProbability, optional_args, primitive_range_array, primitive_range_scalar_array,
+    two_array_args,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// `ScalarUDFImpl` for `randgen_int64_uniform(min, max)`.
+/// `ScalarUDFImpl` for `randgen_int64_uniform(min, max[, null_probability])`.
 pub struct Int64Uniform {
     signature: &'static Signature,
 }
 
 static INT64_UNIFORM_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
-    Signature::exact(vec![DataType::Int64, DataType::Int64], Volatility::Volatile)
+    Signature::one_of(
+        vec![
+            TypeSignature::Exact(vec![DataType::Int64, DataType::Int64]),
+            TypeSignature::Exact(vec![DataType::Int64, DataType::Int64, DataType::Float64]),
+        ],
+        Volatility::Volatile,
+    )
 });
 
 impl Int64Uniform {
@@ -46,9 +58,16 @@ impl Int64Uniform {
         min: Option<i64>,
         max: Option<i64>,
         number_rows: usize,
+        null_probability: &NullProbability,
     ) -> Result<ColumnarValue> {
         Ok(ColumnarValue::Array(Arc::new(
-            primitive_range_scalar_array::<Int64Type>(min, max, number_rows, self.name())?,
+            primitive_range_scalar_array::<Int64Type>(
+                min,
+                max,
+                number_rows,
+                self.name(),
+                null_probability,
+            )?,
         )))
     }
 }
@@ -74,13 +93,15 @@ impl ScalarUDFImpl for Int64Uniform {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [min, max] = crate::randgen::utils::exact_args(args, self.name())?;
+        let ([min, max], null_probability) = optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
         if let (
             ColumnarValue::Scalar(ScalarValue::Int64(min)),
             ColumnarValue::Scalar(ScalarValue::Int64(max)),
         ) = (&min, &max)
         {
-            return self.invoke_scalar_args(*min, *max, number_rows);
+            return self.invoke_scalar_args(*min, *max, number_rows, &null_probability);
         }
 
         let (min_array, max_array) = two_array_args(
@@ -98,6 +119,7 @@ impl ScalarUDFImpl for Int64Uniform {
             max_values,
             number_rows,
             self.name(),
+            &null_probability,
         )?)))
     }
 }

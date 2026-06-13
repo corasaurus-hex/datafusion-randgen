@@ -1,9 +1,11 @@
 //! UTF-8 string random generator.
 //!
-//! `randgen_utf8(characters, min_length, max_length)` builds strings from the
-//! distinct characters in `characters`. Lengths are measured in characters, not
-//! bytes. Bounds must satisfy `0 <= min_length <= max_length`, and the
-//! generated array must fit Arrow's `Utf8` offset limit.
+//! `randgen_utf8(characters, min_length, max_length[, null_probability])`
+//! builds strings from the distinct characters in `characters`. Lengths are
+//! measured in characters, not bytes. Bounds must satisfy
+//! `0 <= min_length <= max_length`, and the generated array must fit Arrow's
+//! `Utf8` offset limit. The optional null probability must be finite and within
+//! `0.0..=1.0`.
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -16,10 +18,12 @@ use arrow_array::{Array, builder::StringBuilder};
 use arrow_schema::DataType;
 use datafusion_common::exec_err;
 use datafusion_common::{DataFusionError, Result, ScalarValue};
-use datafusion_expr::{ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility};
+use datafusion_expr::{
+    ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
+};
 use rand::Rng;
 
-use crate::randgen::utils::three_array_args;
+use crate::randgen::utils::{NullProbability, optional_args, three_array_args};
 
 const MAX_UTF8_ARRAY_BYTES: i64 = i32::MAX as i64;
 
@@ -62,14 +66,22 @@ fn parse_alphabet(characters: &str, name: &str) -> Result<Arc<Alphabet>> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// `ScalarUDFImpl` for `randgen_utf8(characters, min_length, max_length)`.
+/// `ScalarUDFImpl` for `randgen_utf8(characters, min_length, max_length[, null_probability])`.
 pub struct Utf8 {
     signature: &'static Signature,
 }
 
 static UTF8_SIGNATURE: LazyLock<Signature> = LazyLock::new(|| {
-    Signature::exact(
-        vec![DataType::Utf8, DataType::Int64, DataType::Int64],
+    Signature::one_of(
+        vec![
+            TypeSignature::Exact(vec![DataType::Utf8, DataType::Int64, DataType::Int64]),
+            TypeSignature::Exact(vec![
+                DataType::Utf8,
+                DataType::Int64,
+                DataType::Int64,
+                DataType::Float64,
+            ]),
+        ],
         Volatility::Volatile,
     )
 });
@@ -96,6 +108,7 @@ impl Utf8 {
         min_length: Option<i64>,
         max_length: Option<i64>,
         number_rows: usize,
+        null_probability: &NullProbability,
     ) -> Result<ColumnarValue> {
         let (Some(characters), Some(min_length), Some(max_length)) =
             (characters, min_length, max_length)
@@ -138,7 +151,11 @@ impl Utf8 {
 
         let mut rng = rand::rng();
         let mut builder = StringBuilder::with_capacity(number_rows, 0);
-        for _ in 0..number_rows {
+        for row in 0..number_rows {
+            if null_probability.is_null(row, &mut rng, self.name())? {
+                builder.append_null();
+                continue;
+            }
             let length = rng.random_range(min_length..=max_length) as usize;
             for _ in 0..length {
                 let index = rng.random_range(0..alphabet.characters.len());
@@ -179,8 +196,10 @@ impl ScalarUDFImpl for Utf8 {
         let ScalarFunctionArgs {
             args, number_rows, ..
         } = args;
-        let [characters, min_length, max_length] =
-            crate::randgen::utils::exact_args(args, self.name())?;
+        let ([characters, min_length, max_length], null_probability) =
+            optional_args(args, self.name())?;
+        let null_probability =
+            NullProbability::from_optional_arg(null_probability, number_rows, self.name())?;
         if let (
             ColumnarValue::Scalar(ScalarValue::Utf8(characters)),
             ColumnarValue::Scalar(ScalarValue::Int64(min_length)),
@@ -192,6 +211,7 @@ impl ScalarUDFImpl for Utf8 {
                 *min_length,
                 *max_length,
                 number_rows,
+                &null_probability,
             );
         }
 
@@ -264,11 +284,15 @@ impl ScalarUDFImpl for Utf8 {
 
         let mut rng = rand::rng();
         let mut builder = StringBuilder::with_capacity(number_rows, 0);
-        for row_spec in row_specs {
+        for (row, row_spec) in row_specs.into_iter().enumerate() {
             let Some(row_spec) = row_spec else {
                 builder.append_null();
                 continue;
             };
+            if null_probability.is_null(row, &mut rng, self.name())? {
+                builder.append_null();
+                continue;
+            }
 
             let length = rng.random_range(row_spec.min_length..=row_spec.max_length) as usize;
             for _ in 0..length {
