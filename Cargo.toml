@@ -10,13 +10,19 @@ readme = "README.md"
 exclude = ["benches/**", "tests/**"]
 rust-version = "1.89.0"
 
+[features]
+default = []
+column-choice-parquet = ["dep:parquet", "dep:roaring"]
+
 [dependencies]
 arrow-array = { version = "58.0.0", default-features = false }
 arrow-schema = { version = "58.0.0", default-features = false }
 datafusion-common = { version = "53.1.0", default-features = false }
 datafusion-expr = { version = "53.1.0", default-features = false }
+parquet = { version = "58.0.0", optional = true, default-features = false, features = ["arrow", "snap"] }
 rand = "0.9.2"
 rand_distr = "0.5.1"
+roaring = { version = "=0.11.3", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }

@@ -1,14 +1,16 @@
 //! Concrete `ScalarUDFImpl` types for the random generators.
 //!
-//! These modules back the top-level constructors. They are public for callers
-//! that need direct access to a UDF implementation type. Registration code
-//! usually only needs `datafusion_randgen::all_udfs()` or one of the `*_udf`
-//! helpers.
+//! The top-level constructors wrap these modules. They stay public for callers
+//! that need direct access to a UDF implementation type. Registration code can
+//! use `datafusion_randgen::all_udfs()` or one of the `*_udf` helpers.
 
 /// Implementation for `randgen_bool`.
 pub mod bool;
 /// Implementation for `randgen_choice`.
 pub mod choice;
+#[cfg(feature = "column-choice-parquet")]
+/// Implementation for `randgen_column_choice`.
+pub mod column_choice;
 /// Implementation for `randgen_date32`.
 pub mod date32;
 /// Implementation for `randgen_float64_normal`.

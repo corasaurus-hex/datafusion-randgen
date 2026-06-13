@@ -1,8 +1,8 @@
 //! Random data generator UDFs for Apache DataFusion.
 //!
-//! This crate exports `ScalarUDF` constructors. It does not register functions
-//! or own a `SessionContext`; the application that owns the DataFusion session
-//! chooses which generators to install.
+//! The crate exports `ScalarUDF` constructors. It does not register functions
+//! or own a `SessionContext`; your DataFusion session code chooses which
+//! generators to install.
 //!
 //! ```no_run
 //! use datafusion::prelude::SessionContext;
@@ -13,9 +13,13 @@
 //! }
 //! ```
 //!
-//! Every exported UDF is volatile. Null required inputs produce null output for
-//! that row. Invalid ranges and distribution parameters return DataFusion
-//! errors.
+//! Exported UDFs are volatile. For row-wise generators, null required inputs
+//! produce null output for that row. Invalid ranges and distribution parameters
+//! return DataFusion errors.
+//!
+//! With `column-choice-parquet` enabled,
+//! `randgen_column_choice(source_path, column_name)` samples from distinct
+//! non-null `UInt32` or `UInt64` values in a Parquet column.
 
 #![deny(missing_docs)]
 
@@ -23,6 +27,8 @@ use datafusion_expr::ScalarUDF;
 
 pub use crate::randgen::bool::Bool;
 pub use crate::randgen::choice::Choice;
+#[cfg(feature = "column-choice-parquet")]
+pub use crate::randgen::column_choice::ColumnChoice;
 pub use crate::randgen::date32::Date32;
 pub use crate::randgen::float64_normal::Float64Normal;
 pub use crate::randgen::float64_uniform::Float64Uniform;
@@ -35,9 +41,8 @@ pub use crate::randgen::utf8::Utf8;
 
 /// Concrete implementation modules for the exported random generator UDFs.
 ///
-/// Most callers should use the top-level `*_udf` constructors or [`all_udfs`].
-/// This module is public for callers that need direct access to the
-/// `ScalarUDFImpl` types.
+/// Prefer the top-level `*_udf` constructors or [`all_udfs`]. The module stays
+/// public for callers that need direct access to the `ScalarUDFImpl` types.
 pub mod randgen;
 
 /// Builds `randgen_int64_uniform(min, max)`.
@@ -52,10 +57,10 @@ pub fn int64_uniform_udf() -> ScalarUDF {
 /// Builds `randgen_uint64_uniform(min, max)`.
 ///
 /// The UDF returns a `UInt64` sampled from the inclusive range `min..=max`.
-/// This covers the full `UInt64` domain, including values that cannot be
-/// represented by `Int64`. Arguments may be `UInt64` values or nonnegative
-/// signed integer values. Null bounds produce null output for that row. Non-null
-/// bounds must satisfy `min <= max`.
+/// The generator covers the full `UInt64` domain, including values that cannot
+/// be represented by `Int64`. Arguments may be `UInt64` values or nonnegative
+/// signed integer values. Null bounds produce null output for that row.
+/// Non-null bounds must satisfy `min <= max`.
 pub fn uint64_uniform_udf() -> ScalarUDF {
     ScalarUDF::from(UInt64Uniform::new())
 }
@@ -127,6 +132,16 @@ pub fn choice_udf() -> ScalarUDF {
     ScalarUDF::from(Choice::new())
 }
 
+/// Builds `randgen_column_choice(source_path, column_name)`.
+///
+/// Samples with replacement from distinct non-null values in a Parquet column.
+/// `source_path` and `column_name` must be scalar strings known at planning
+/// time. Source columns must use `UInt32` or `UInt64`.
+#[cfg(feature = "column-choice-parquet")]
+pub fn column_choice_udf() -> ScalarUDF {
+    ScalarUDF::from(ColumnChoice::new())
+}
+
 /// Builds `randgen_date32(min, max)`.
 ///
 /// The UDF returns a `Date32` sampled from the inclusive day range `min..=max`.
@@ -146,9 +161,10 @@ pub fn timestamp_millisecond_udf() -> ScalarUDF {
 
 /// Builds all UDFs exported by this crate.
 ///
-/// Use this when a session should expose the whole generator set.
+/// Register these when a session should expose the whole generator set. With
+/// `column-choice-parquet` enabled, the list includes `randgen_column_choice`.
 pub fn all_udfs() -> Vec<ScalarUDF> {
-    vec![
+    let udfs = vec![
         int64_uniform_udf(),
         uint64_uniform_udf(),
         float64_uniform_udf(),
@@ -160,5 +176,14 @@ pub fn all_udfs() -> Vec<ScalarUDF> {
         choice_udf(),
         date32_udf(),
         timestamp_millisecond_udf(),
-    ]
+    ];
+
+    #[cfg(feature = "column-choice-parquet")]
+    let udfs = {
+        let mut udfs = udfs;
+        udfs.push(column_choice_udf());
+        udfs
+    };
+
+    udfs
 }
