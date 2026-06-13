@@ -1,8 +1,8 @@
 //! Random data generator UDFs for Apache DataFusion.
 //!
-//! This crate exports `ScalarUDF` constructors. It doesn't register functions
-//! for you or own a `SessionContext`; the application that owns the DataFusion
-//! session decides which generators to install.
+//! This crate exports `ScalarUDF` constructors. It does not register functions
+//! or own a `SessionContext`; the application that owns the DataFusion session
+//! chooses which generators to install.
 //!
 //! ```no_run
 //! use datafusion::prelude::SessionContext;
@@ -13,9 +13,9 @@
 //! }
 //! ```
 //!
-//! All exported functions are volatile. Required null inputs produce null
-//! outputs for that row. Invalid ranges and distribution parameters return
-//! DataFusion errors.
+//! Every exported UDF is volatile. Null required inputs produce null output for
+//! that row. Invalid ranges and distribution parameters return DataFusion
+//! errors.
 
 #![deny(missing_docs)]
 
@@ -33,11 +33,11 @@ pub use crate::randgen::uint64_normal::UInt64Normal;
 pub use crate::randgen::uint64_uniform::UInt64Uniform;
 pub use crate::randgen::utf8::Utf8;
 
-/// Implementation modules for the exported random generator UDFs.
+/// Concrete implementation modules for the exported random generator UDFs.
 ///
 /// Most callers should use the top-level `*_udf` constructors or [`all_udfs`].
-/// The module remains public so advanced users can construct or inspect the
-/// concrete `ScalarUDFImpl` types directly.
+/// This module is public for callers that need direct access to the
+/// `ScalarUDFImpl` types.
 pub mod randgen;
 
 /// Builds `randgen_int64_uniform(min, max)`.
@@ -63,8 +63,7 @@ pub fn uint64_uniform_udf() -> ScalarUDF {
 /// Builds `randgen_float64_uniform(min, max)`.
 ///
 /// The UDF returns a `Float64` sampled from the inclusive range `min..=max`.
-/// Bounds must be finite, the distance between them must be finite, and
-/// `min <= max`.
+/// Bounds and their span must be finite, and `min <= max`.
 pub fn float64_uniform_udf() -> ScalarUDF {
     ScalarUDF::from(Float64Uniform::new())
 }
@@ -72,28 +71,28 @@ pub fn float64_uniform_udf() -> ScalarUDF {
 /// Builds `randgen_float64_normal(mean, stddev)`.
 ///
 /// The UDF returns a `Float64` sampled from a normal distribution. Arguments
-/// must be finite and `stddev` must be greater than zero.
+/// must be finite, and `stddev` must be greater than zero.
 pub fn float64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(Float64Normal::new())
 }
 
 /// Builds `randgen_int64_normal(min, max, mean, stddev)`.
 ///
-/// The UDF returns an `Int64` in the inclusive range `min..=max`. `stddev` is
-/// supplied by the caller; the range is a truncation bound, not an input used to
-/// calculate standard deviation, and `mean` may be outside the range. Sampling
-/// uses a rounded f64 normal and retries values outside the truncation range.
-/// Very low-probability tail ranges can error after a bounded number of
-/// retries. `min <= max`, and `stddev` must be finite and greater than zero.
+/// The UDF returns an `Int64` in the inclusive range `min..=max`. The caller
+/// supplies `stddev`; the range is a truncation bound, not an input used to
+/// calculate standard deviation. `mean` may be outside the range. Sampling uses
+/// a rounded f64 normal and retries values outside the truncation range. Very
+/// low-probability tail ranges can error after a bounded number of retries.
+/// `min <= max`, and `stddev` must be finite and greater than zero.
 pub fn int64_normal_udf() -> ScalarUDF {
     ScalarUDF::from(Int64Normal::new())
 }
 
 /// Builds `randgen_uint64_normal(min, max, mean, stddev)`.
 ///
-/// The UDF returns a `UInt64` in the inclusive range `min..=max`. `stddev` is
-/// supplied by the caller; the range is a truncation bound, not an input used to
-/// calculate standard deviation, and `mean` may be outside the range.
+/// The UDF returns a `UInt64` in the inclusive range `min..=max`. The caller
+/// supplies `stddev`; the range is a truncation bound, not an input used to
+/// calculate standard deviation. `mean` may be outside the range.
 /// `min`, `max`, and `mean` may be `UInt64` values or nonnegative signed integer
 /// values. Sampling uses a rounded f64 normal and retries values outside the
 /// truncation range. Very low-probability tail ranges can error after a bounded
@@ -145,7 +144,7 @@ pub fn timestamp_millisecond_udf() -> ScalarUDF {
     ScalarUDF::from(TimestampMillisecond::new())
 }
 
-/// Builds every UDF exported by this crate.
+/// Builds all UDFs exported by this crate.
 ///
 /// Use this when a session should expose the whole generator set.
 pub fn all_udfs() -> Vec<ScalarUDF> {

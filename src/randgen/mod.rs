@@ -1,9 +1,9 @@
 //! Concrete `ScalarUDFImpl` types for the random generators.
 //!
-//! These modules contain the implementation detail behind the top-level
-//! constructors. They are public for callers that need direct access to a UDF
-//! implementation type, but registration code usually only needs
-//! `datafusion_randgen::all_udfs()` or one of the `*_udf` helpers.
+//! These modules back the top-level constructors. They are public for callers
+//! that need direct access to a UDF implementation type. Registration code
+//! usually only needs `datafusion_randgen::all_udfs()` or one of the `*_udf`
+//! helpers.
 
 /// Implementation for `randgen_bool`.
 pub mod bool;

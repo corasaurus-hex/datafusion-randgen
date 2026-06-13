@@ -1,8 +1,8 @@
 //! Float64 normal-distribution random generator.
 //!
 //! `randgen_float64_normal(mean, stddev)` samples from a normal distribution.
-//! Both arguments must be finite, and `stddev` must be greater than zero. Null
-//! input yields null output for that row.
+//! Both arguments must be finite, and `stddev` must be greater than zero. A
+//! null argument produces null output for that row.
 
 use std::any::Any;
 use std::sync::LazyLock;

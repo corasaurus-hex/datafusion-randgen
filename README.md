@@ -2,9 +2,9 @@
 
 Random data generator UDFs for Apache DataFusion.
 
-The crate gives you `ScalarUDF` values. It does not modify your `SessionContext` or
-register anything as a side effect. Register the UDFs yourself, in the
-DataFusion application that owns the session.
+This crate exports `ScalarUDF` constructors. It does not modify a
+`SessionContext` or register functions as a side effect. The application that
+owns the DataFusion session chooses which UDFs to register.
 
 ## Install
 
@@ -33,9 +33,9 @@ ctx.register_udf(datafusion_randgen::utf8_udf());
 
 ## UDFs
 
-All generators are volatile DataFusion scalar functions. Bounds are inclusive.
-A null in any required argument means the output for that row is null. Invalid parameters
-return DataFusion errors. They do not silently clamp or swap values.
+Every generator is a volatile DataFusion scalar function. Bounds are inclusive.
+Null required arguments produce null output for that row. Invalid parameters
+return DataFusion errors; generators do not clamp or swap bad ranges.
 
 | Function                        | Arguments                                                | Returns                  | Rules                                                                                     |
 | ------------------------------- | -------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------- |
@@ -52,15 +52,15 @@ return DataFusion errors. They do not silently clamp or swap values.
 | `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)` | `Timestamp(Millisecond)` | Requires matching timestamp timezones and `min <= max`.                                   |
 
 The `UInt64` generators accept `UInt64` values and nonnegative signed integer
-inputs. That lets plain SQL calls mix literals such as `0` with values larger
-than `Int64::MAX`; DataFusion parses `18446744073709551615` as `UInt64`.
+inputs. Plain SQL calls can mix literals such as `0` with values larger than
+`Int64::MAX`; DataFusion parses `18446744073709551615` as `UInt64`.
 
 For the integer normal generators, `min..=max` is a truncation bound, not an
 input used to calculate `stddev`. The implementation samples an f64 normal
-centered on `mean`, rounds to the nearest integer, and retries when the rounded
-value falls outside `min..=max`. A single-value range returns that value. Very
-low-probability tail ranges can error after a bounded number of retries; widen
-the range or move `mean` closer to the requested output range in that case.
+centered on `mean`, rounds to the nearest integer, and retries values outside
+`min..=max`. A single-value range returns that value. Very low-probability tail
+ranges can error after a bounded number of retries; widen the range or move
+`mean` closer to the requested output range in that case.
 
 Use `randgen_int64_uniform` or `randgen_uint64_uniform` when every integer in a
 large range must be directly representable. Integer normal sampling is
@@ -110,8 +110,8 @@ That runs:
 - `cargo clippy --all-targets -- -D warnings`
 - `cargo nextest run --all-targets`
 
-The integration suite covers property tests for every public UDF, plus a
-bounded stress test over larger batches. A longer soak pass is opt-in:
+The integration suite includes property tests for every public UDF and a bounded
+stress test over larger batches. A longer soak pass is opt-in:
 
 ```bash
 just soak
@@ -128,15 +128,14 @@ just coverage
 ```
 
 Use `cargo package --list --locked` to check package contents. Benchmarks and
-integration tests are excluded from the published crate.
+integration tests are not included in the published crate.
 
-`deny.toml` contains one narrow advisory ignore for `paste`, which is currently
-pulled in by `datafusion 53.1.0`. The advisory marks `paste` unmaintained
-and lists no safe upgrade. Drop the ignore once DataFusion stops depending on
-it. Duplicate dependency versions remain warnings unless they point to a real
-security or size problem.
+`deny.toml` contains one advisory ignore for `paste`, which is pulled in by
+`datafusion 53.1.0`. The advisory marks `paste` unmaintained and lists no safe
+upgrade. Drop the ignore once DataFusion stops depending on it. Duplicate
+dependency versions remain warnings unless they point to a security or size
+problem.
 
 ## License
 
-Licensed under either of Apache License, Version 2.0 or MIT license at your
-option.
+Licensed under MIT or Apache-2.0, at your option.

@@ -2,8 +2,8 @@
 //!
 //! `randgen_int64_normal(min, max, mean, stddev)` samples an integer normal
 //! distribution centered on `mean` and truncated to the inclusive `Int64`
-//! range `min..=max`. The mean may be outside the output range. Null input
-//! yields null output for that row.
+//! range `min..=max`. The mean may be outside the output range. A null argument
+//! produces null output for that row.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};

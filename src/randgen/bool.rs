@@ -1,8 +1,8 @@
 //! Boolean random generator.
 //!
 //! `randgen_bool(probability)` returns `true` with the supplied probability.
-//! The probability must be finite and within `0.0..=1.0`; null input yields
-//! null output for that row.
+//! The probability must be finite and within `0.0..=1.0`; a null probability
+//! produces null output for that row.
 
 use std::any::Any;
 use std::sync::LazyLock;

@@ -1,8 +1,8 @@
 //! List choice random generator.
 //!
 //! `randgen_choice(choices)` samples one item from a `List<T>` and returns
-//! type `T`. Non-null lists must contain at least one element. A null list
-//! produces null output for that row.
+//! type `T`. Non-null lists must contain at least one element. Null lists
+//! produce null output for that row.
 
 use std::any::Any;
 use std::sync::{Arc, LazyLock};
