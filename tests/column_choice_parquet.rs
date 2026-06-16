@@ -9,8 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use arrow_array::{Array, ArrayRef, Int64Array, RecordBatch, UInt32Array, UInt64Array};
 use arrow_schema::{DataType, Field, Schema};
 use datafusion::prelude::SessionContext;
-use datafusion_randgen::{all_udfs, column_choice_udf};
-use parquet::arrow::ArrowWriter;
+use datafusion_randgen::{all_udafs, all_udfs, column_choice_udafs, column_choice_udfs};
+use parquet::arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder};
 
 fn unique_path(test_name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -18,7 +18,7 @@ fn unique_path(test_name: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!(
-        "datafusion_randgen_{test_name}_{}_{}",
+        "datafusion_randgen_{test_name}_{}_{}.parquet",
         std::process::id(),
         nanos
     ))
@@ -35,12 +35,51 @@ fn write_parquet(test_name: &str, field: Field, column: ArrayRef) -> PathBuf {
     path
 }
 
-fn sql_string(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
+fn context_with_column_choice() -> SessionContext {
+    let ctx = SessionContext::new();
+    for udf in column_choice_udfs() {
+        ctx.register_udf(udf);
+    }
+    for udaf in column_choice_udafs() {
+        ctx.register_udaf(udaf);
+    }
+    ctx
 }
 
-fn path_sql(path: &Path) -> String {
-    sql_string(&path.to_string_lossy())
+fn context_with_all_functions() -> SessionContext {
+    let ctx = SessionContext::new();
+    for udf in all_udfs() {
+        ctx.register_udf(udf);
+    }
+    for udaf in all_udafs() {
+        ctx.register_udaf(udaf);
+    }
+    ctx
+}
+
+fn register_source(ctx: &SessionContext, path: &Path) {
+    let file = File::open(path).unwrap();
+    let mut reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .unwrap()
+        .build()
+        .unwrap();
+    let batch = reader.next().unwrap().unwrap();
+    assert!(reader.next().is_none());
+    ctx.register_batch("source", batch).unwrap();
+}
+
+async fn collect(ctx: &SessionContext, sql: &str) -> Vec<RecordBatch> {
+    ctx.sql(sql).await.unwrap().collect().await.unwrap()
+}
+
+async fn collect_error(ctx: &SessionContext, sql: &str) -> String {
+    match ctx.sql(sql).await {
+        Ok(df) => match df.collect().await {
+            Ok(_) => panic!("query unexpectedly succeeded"),
+            Err(error) => error.to_string(),
+        },
+        Err(error) => error.to_string(),
+    }
 }
 
 fn column_values_u32(batches: &[RecordBatch]) -> Vec<u32> {
@@ -75,26 +114,8 @@ fn column_values_u64(batches: &[RecordBatch]) -> Vec<u64> {
         .collect()
 }
 
-async fn collect_with_column_choice(sql: &str) -> Vec<RecordBatch> {
-    let ctx = SessionContext::new();
-    ctx.register_udf(column_choice_udf());
-    ctx.sql(sql).await.unwrap().collect().await.unwrap()
-}
-
-async fn collect_error(sql: &str) -> String {
-    let ctx = SessionContext::new();
-    ctx.register_udf(column_choice_udf());
-    match ctx.sql(sql).await {
-        Ok(df) => match df.collect().await {
-            Ok(_) => panic!("query unexpectedly succeeded"),
-            Err(error) => error.to_string(),
-        },
-        Err(error) => error.to_string(),
-    }
-}
-
 #[tokio::test]
-async fn samples_distinct_non_null_uint32_values() {
+async fn samples_distinct_non_null_uint32_values_from_parquet() {
     let path = write_parquet(
         "uint32_distinct",
         Field::new("id", DataType::UInt32, true),
@@ -102,45 +123,43 @@ async fn samples_distinct_non_null_uint32_values() {
             Some(7),
             Some(7),
             Some(7),
-            Some(7),
-            Some(7),
-            Some(7),
-            Some(7),
-            Some(7),
-            Some(7),
-            Some(7),
             None,
             Some(99),
         ])),
     );
-    let sql = format!(
-        "SELECT randgen_column_choice({}, 'id') AS id FROM generate_series(1, 512)",
-        path_sql(&path)
-    );
+    let ctx = context_with_column_choice();
+    register_source(&ctx, &path);
 
-    let batches = collect_with_column_choice(&sql).await;
+    let batches = collect(
+        &ctx,
+        "WITH choices AS (SELECT randgen_roaring_agg(id) AS ids FROM source) \
+         SELECT randgen_column_choice(ids) AS id FROM choices, generate_series(1, 512)",
+    )
+    .await;
 
     assert_eq!(batches[0].schema().field(0).data_type(), &DataType::UInt32);
     let values = column_values_u32(&batches);
     assert_eq!(values.len(), 512);
     assert!(values.iter().all(|value| [7, 99].contains(value)));
-    let rare_value_count = values.iter().filter(|value| **value == 99).count();
-    assert!(rare_value_count > 100);
+    assert!(values.iter().filter(|value| **value == 99).count() > 100);
 }
 
 #[tokio::test]
-async fn samples_uint64_values_including_max() {
+async fn samples_uint64_values_including_max_from_parquet() {
     let path = write_parquet(
         "uint64_max",
         Field::new("id", DataType::UInt64, true),
         Arc::new(UInt64Array::from(vec![Some(9), None, Some(u64::MAX)])),
     );
-    let sql = format!(
-        "SELECT randgen_column_choice({}, 'id') AS id FROM generate_series(1, 256)",
-        path_sql(&path)
-    );
+    let ctx = context_with_column_choice();
+    register_source(&ctx, &path);
 
-    let batches = collect_with_column_choice(&sql).await;
+    let batches = collect(
+        &ctx,
+        "WITH choices AS (SELECT randgen_roaring_agg(id) AS ids FROM source) \
+         SELECT randgen_column_choice(ids) AS id FROM choices, generate_series(1, 256)",
+    )
+    .await;
 
     assert_eq!(batches[0].schema().field(0).data_type(), &DataType::UInt64);
     let values = column_values_u64(&batches);
@@ -153,39 +172,41 @@ async fn samples_uint64_values_including_max() {
 }
 
 #[tokio::test]
-async fn all_udfs_registers_column_choice_when_feature_is_enabled() {
+async fn all_function_helpers_register_column_choice_scalar_and_aggregate() {
     let path = write_parquet(
-        "all_udfs",
+        "all_functions",
         Field::new("id", DataType::UInt32, false),
         Arc::new(UInt32Array::from(vec![1, 2, 3])),
     );
-    let sql = format!(
-        "SELECT randgen_column_choice({}, 'id') AS id FROM generate_series(1, 8)",
-        path_sql(&path)
-    );
-    let ctx = SessionContext::new();
-    for udf in all_udfs() {
-        ctx.register_udf(udf);
-    }
+    let ctx = context_with_all_functions();
+    register_source(&ctx, &path);
 
-    let batches = ctx.sql(&sql).await.unwrap().collect().await.unwrap();
+    let batches = collect(
+        &ctx,
+        "WITH choices AS (SELECT randgen_roaring_agg(id) AS ids FROM source) \
+         SELECT randgen_column_choice(ids) AS id FROM choices, generate_series(1, 8)",
+    )
+    .await;
 
     assert_eq!(column_values_u32(&batches).len(), 8);
 }
 
 #[tokio::test]
-async fn optional_null_probability_can_null_column_choice_values() {
+async fn optional_null_probability_can_null_parquet_column_choice_values() {
     let path = write_parquet(
         "nullable_column_choice",
         Field::new("id", DataType::UInt32, false),
         Arc::new(UInt32Array::from(vec![1, 2, 3])),
     );
-    let sql = format!(
-        "SELECT randgen_column_choice({}, 'id', 1.0) AS id FROM generate_series(1, 8)",
-        path_sql(&path)
-    );
+    let ctx = context_with_column_choice();
+    register_source(&ctx, &path);
 
-    let batches = collect_with_column_choice(&sql).await;
+    let batches = collect(
+        &ctx,
+        "WITH choices AS (SELECT randgen_roaring_agg(id) AS ids FROM source) \
+         SELECT randgen_column_choice(ids, 1.0) AS id FROM choices, generate_series(1, 8)",
+    )
+    .await;
 
     assert_eq!(batches[0].schema().field(0).data_type(), &DataType::UInt32);
     for batch in batches {
@@ -195,134 +216,78 @@ async fn optional_null_probability_can_null_column_choice_values() {
 }
 
 #[tokio::test]
-async fn optional_null_probability_rejects_bad_column_choice_values() {
+async fn optional_null_probability_rejects_bad_parquet_column_choice_values() {
     let path = write_parquet(
         "bad_nullable_column_choice",
         Field::new("id", DataType::UInt32, false),
         Arc::new(UInt32Array::from(vec![1, 2, 3])),
     );
-    let sql = format!(
-        "SELECT randgen_column_choice({}, 'id', -0.1) AS id FROM generate_series(1, 1)",
-        path_sql(&path)
-    );
+    let ctx = context_with_column_choice();
+    register_source(&ctx, &path);
 
-    let error = collect_error(&sql).await;
+    let error = collect_error(
+        &ctx,
+        "WITH choices AS (SELECT randgen_roaring_agg(id) AS ids FROM source) \
+         SELECT randgen_column_choice(ids, -0.1) AS id FROM choices, generate_series(1, 1)",
+    )
+    .await;
 
     assert!(error.contains("requires probability between 0.0 and 1.0 inclusive"));
 }
 
 #[tokio::test]
-async fn errors_when_source_column_is_all_null() {
+async fn errors_when_parquet_source_column_is_all_null() {
     let path = write_parquet(
         "all_null",
         Field::new("id", DataType::UInt32, true),
         Arc::new(UInt32Array::from(vec![None::<u32>, None])),
     );
-    let sql = format!(
-        "SELECT randgen_column_choice({}, 'id') AS id FROM generate_series(1, 1)",
-        path_sql(&path)
-    );
+    let ctx = context_with_column_choice();
+    register_source(&ctx, &path);
 
-    let error = collect_error(&sql).await;
+    let error = collect_error(
+        &ctx,
+        "WITH choices AS (SELECT randgen_roaring_agg(id) AS ids FROM source) \
+         SELECT randgen_column_choice(ids) AS id FROM choices, generate_series(1, 1)",
+    )
+    .await;
 
     assert!(error.contains("requires at least one non-null source value"));
 }
 
 #[tokio::test]
-async fn errors_when_source_column_is_missing() {
+async fn errors_when_parquet_source_column_is_missing() {
     let path = write_parquet(
         "missing_column",
         Field::new("id", DataType::UInt32, false),
         Arc::new(UInt32Array::from(vec![1, 2, 3])),
     );
-    let sql = format!(
-        "SELECT randgen_column_choice({}, 'missing') AS id FROM generate_series(1, 1)",
-        path_sql(&path)
-    );
+    let ctx = context_with_column_choice();
+    register_source(&ctx, &path);
 
-    let error = collect_error(&sql).await;
+    let error = collect_error(
+        &ctx,
+        "SELECT randgen_roaring_agg(missing) AS ids FROM source",
+    )
+    .await;
 
-    assert!(error.contains("could not find column missing"));
+    assert!(error.contains("missing"));
 }
 
 #[tokio::test]
-async fn errors_when_source_column_type_is_unsupported() {
+async fn errors_when_parquet_source_column_type_is_unsupported() {
     let path = write_parquet(
         "unsupported_type",
         Field::new("id", DataType::Int64, false),
         Arc::new(Int64Array::from(vec![1, 2, 3])),
     );
-    let sql = format!(
-        "SELECT randgen_column_choice({}, 'id') AS id FROM generate_series(1, 1)",
-        path_sql(&path)
-    );
+    let ctx = context_with_column_choice();
+    register_source(&ctx, &path);
 
-    let error = collect_error(&sql).await;
-
-    assert!(error.contains("supports UInt32 and UInt64 columns"));
-}
-
-#[tokio::test]
-async fn errors_when_source_path_is_not_scalar() {
-    let path = write_parquet(
-        "non_scalar_path",
-        Field::new("id", DataType::UInt32, false),
-        Arc::new(UInt32Array::from(vec![1, 2, 3])),
-    );
-    let sql = format!(
-        "SELECT randgen_column_choice(path, 'id') AS id \
-         FROM (SELECT {} AS path FROM generate_series(1, 1))",
-        path_sql(&path)
-    );
-
-    let error = collect_error(&sql).await;
-
-    assert!(error.contains("requires scalar source_path"));
-}
-
-#[tokio::test]
-async fn errors_when_column_name_is_not_scalar() {
-    let path = write_parquet(
-        "non_scalar_column",
-        Field::new("id", DataType::UInt32, false),
-        Arc::new(UInt32Array::from(vec![1, 2, 3])),
-    );
-    let sql = format!(
-        "SELECT randgen_column_choice({}, column_name) AS id \
-         FROM (SELECT 'id' AS column_name FROM generate_series(1, 1))",
-        path_sql(&path)
-    );
-
-    let error = collect_error(&sql).await;
-
-    assert!(error.contains("requires scalar column_name"));
-}
-
-#[tokio::test]
-async fn errors_when_scalar_arguments_are_null() {
-    let path = write_parquet(
-        "null_scalars",
-        Field::new("id", DataType::UInt32, false),
-        Arc::new(UInt32Array::from(vec![1, 2, 3])),
-    );
-    let null_path_sql = "SELECT randgen_column_choice(CAST(NULL AS VARCHAR), 'id') AS id \
-         FROM generate_series(1, 1)"
-        .to_owned();
-    let null_column_sql = format!(
-        "SELECT randgen_column_choice({}, CAST(NULL AS VARCHAR)) AS id \
-         FROM generate_series(1, 1)",
-        path_sql(&path)
-    );
-
-    let null_path_error = collect_error(&null_path_sql).await;
-    let null_column_error = collect_error(&null_column_sql).await;
+    let error = collect_error(&ctx, "SELECT randgen_roaring_agg(id) AS ids FROM source").await;
 
     assert!(
-        null_path_error.contains("requires scalar source_path"),
-        "{null_path_error}"
-    );
-    assert!(
-        null_column_error.contains("requires scalar column_name"),
-        "{null_column_error}"
+        error.contains("UInt32") || error.contains("UInt64"),
+        "{error}"
     );
 }

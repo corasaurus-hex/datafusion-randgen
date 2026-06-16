@@ -1,8 +1,8 @@
 //! Random data generator UDFs for Apache DataFusion.
 //!
-//! The crate exports `ScalarUDF` constructors. It does not register functions
-//! or own a `SessionContext`; your DataFusion session code chooses which
-//! generators to install.
+//! The crate exports DataFusion UDF constructors. It does not register
+//! functions or own a `SessionContext`; your DataFusion session code chooses
+//! which generators to install.
 //!
 //! ```no_run
 //! use datafusion::prelude::SessionContext;
@@ -10,6 +10,9 @@
 //! let ctx = SessionContext::new();
 //! for udf in datafusion_randgen::all_udfs() {
 //!     ctx.register_udf(udf);
+//! }
+//! for udaf in datafusion_randgen::all_udafs() {
+//!     ctx.register_udaf(udaf);
 //! }
 //! ```
 //!
@@ -26,18 +29,17 @@
 //! nullability must wrap an arbitrary expression.
 //!
 //! With `column-choice-parquet` or `column-choice-arrow-ipc` enabled,
-//! `randgen_column_choice(source_path, column_name[, null_probability])`
-//! samples from distinct non-null `UInt32` or `UInt64` values in a supported
-//! columnar file.
+//! `randgen_roaring_agg(source_column)` builds a serialized roaring set and
+//! `randgen_column_choice(values[, null_probability])` samples from it.
 
 #![deny(missing_docs)]
 
-use datafusion_expr::ScalarUDF;
+use datafusion_expr::{AggregateUDF, ScalarUDF};
 
 pub use crate::randgen::bool::Bool;
 pub use crate::randgen::choice::Choice;
 #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
-pub use crate::randgen::column_choice::ColumnChoice;
+pub use crate::randgen::column_choice::{ColumnChoice, RoaringAgg};
 pub use crate::randgen::date32::Date32;
 pub use crate::randgen::float64_normal::Float64Normal;
 pub use crate::randgen::float64_uniform::Float64Uniform;
@@ -153,14 +155,34 @@ pub fn nullable_udf() -> ScalarUDF {
     ScalarUDF::from(Nullable::new())
 }
 
-/// Builds `randgen_column_choice(source_path, column_name[, null_probability])`.
+/// Builds `randgen_column_choice(values[, null_probability])`.
 ///
-/// Samples with replacement from distinct non-null values in a supported
-/// columnar file. `source_path` and `column_name` must be scalar strings known
-/// at planning time. Source columns must use `UInt32` or `UInt64`.
+/// Samples with replacement from a scalar serialized roaring set produced by
+/// `randgen_roaring_agg`.
 #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
 pub fn column_choice_udf() -> ScalarUDF {
     ScalarUDF::from(ColumnChoice::new())
+}
+
+/// Builds column-choice scalar UDFs.
+#[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
+pub fn column_choice_udfs() -> Vec<ScalarUDF> {
+    crate::randgen::column_choice::column_choice_udfs()
+}
+
+/// Builds `randgen_roaring_agg(source_column)`.
+///
+/// The aggregate accepts `UInt32` or `UInt64` and returns a serialized roaring
+/// value for `randgen_column_choice`.
+#[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
+pub fn roaring_agg_udaf() -> AggregateUDF {
+    AggregateUDF::from(RoaringAgg::new())
+}
+
+/// Builds column-choice aggregate UDFs.
+#[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
+pub fn column_choice_udafs() -> Vec<AggregateUDF> {
+    vec![roaring_agg_udaf()]
 }
 
 /// Builds `randgen_date32(min, max[, null_probability])`.
@@ -180,11 +202,11 @@ pub fn timestamp_millisecond_udf() -> ScalarUDF {
     ScalarUDF::from(TimestampMillisecond::new())
 }
 
-/// Builds all UDFs exported by this crate.
+/// Builds all scalar UDFs exported by this crate.
 ///
 /// Register these when a session should expose the whole generator set. With
 /// a column-choice source feature enabled, the list includes
-/// `randgen_column_choice`.
+/// `randgen_column_choice`. Use [`all_udafs`] to register aggregate UDFs.
 pub fn all_udfs() -> Vec<ScalarUDF> {
     let udfs = vec![
         int64_uniform_udf(),
@@ -204,9 +226,23 @@ pub fn all_udfs() -> Vec<ScalarUDF> {
     #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
     let udfs = {
         let mut udfs = udfs;
-        udfs.push(column_choice_udf());
+        udfs.extend(column_choice_udfs());
         udfs
     };
 
     udfs
+}
+
+/// Builds all aggregate UDFs exported by this crate.
+pub fn all_udafs() -> Vec<AggregateUDF> {
+    let udafs = vec![];
+
+    #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
+    let udafs = {
+        let mut udafs = udafs;
+        udafs.extend(column_choice_udafs());
+        udafs
+    };
+
+    udafs
 }

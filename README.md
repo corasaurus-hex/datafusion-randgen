@@ -13,7 +13,7 @@ session code chooses which UDFs to register.
 datafusion-randgen = "0.1.0"
 ```
 
-Enable file-backed column sampling with feature flags:
+Enable column-choice sampling with feature flags:
 
 ```toml
 [dependencies]
@@ -42,6 +42,20 @@ ctx.register_udf(datafusion_randgen::int64_uniform_udf());
 ctx.register_udf(datafusion_randgen::utf8_udf());
 ```
 
+For column-choice sampling, register `column_choice_udf()` only when you already
+have serialized roaring values. To build the input set in SQL, register
+`column_choice_udfs()` and `column_choice_udafs()`, or register all aggregates
+with `all_udafs()`:
+
+```rust
+for udf in datafusion_randgen::column_choice_udfs() {
+    ctx.register_udf(udf);
+}
+for udaf in datafusion_randgen::column_choice_udafs() {
+    ctx.register_udaf(udaf);
+}
+```
+
 ## UDFs
 
 Generators are volatile DataFusion scalar functions. Bounds are inclusive. For
@@ -67,7 +81,8 @@ so generated values are not stored under null rows.
 | `randgen_utf8`                  | `characters Utf8, min_length Int64, max_length Int64[, null_probability Float64]`    | `Utf8`                   | Uses the distinct characters from `characters`; requires `0 <= min_length <= max_length`. |
 | `randgen_choice`                | `choices List<T>[, null_probability Float64]`                                        | `T`                      | Samples one element from a non-empty list for each row.                                   |
 | `randgen_nullable`              | `value T, probability Float64`                                                       | `T`                      | Rebuilds null rows safely around any expression; preserves existing nulls.                |
-| `randgen_column_choice`         | `source_path Utf8, column_name Utf8[, null_probability Float64]`                     | `UInt32` or `UInt64`     | Feature-gated; samples distinct non-null values from a supported source column.           |
+| `randgen_roaring_agg`           | `source_column UInt32 or UInt64`                                                     | `Binary` or `LargeBinary` | Feature-gated aggregate; builds a serialized roaring set of distinct non-null values.    |
+| `randgen_column_choice`         | `values Binary or LargeBinary[, null_probability Float64]`                           | `UInt32` or `UInt64`     | Feature-gated; samples values produced by `randgen_roaring_agg`.                         |
 | `randgen_date32`                | `min Date32, max Date32[, null_probability Float64]`                                 | `Date32`                 | Requires `min <= max`; samples from the inclusive day range.                              |
 | `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)[, null_probability Float64]` | `Timestamp(Millisecond)` | Requires matching timestamp timezones and `min <= max`.                                   |
 
@@ -86,15 +101,13 @@ Choose `randgen_int64_uniform` or `randgen_uint64_uniform` when every integer in
 a large range must be directly representable. Integer normal sampling is
 f64-backed and inherits f64 spacing limits for very large magnitudes.
 
-`randgen_column_choice` requires at least one source feature:
-`column-choice-parquet` for Parquet files, or `column-choice-arrow-ipc` for
-Arrow IPC file and stream files. It detects the source format from file
-contents, not from the file extension. Both arguments must be scalar strings
-known at planning time; row values are rejected. The source column must be
-`UInt32` or `UInt64`. The loader ignores null source values, collapses
-duplicates, and keeps the remaining distinct values. Generated rows sample from
-that set with replacement. A UDF instance caches loaded sets by format, path,
-column name, file size, and modified timestamp.
+Column-choice sampling requires at least one column-choice feature:
+`column-choice-parquet` or `column-choice-arrow-ipc`. The aggregate accepts
+`UInt32` and `UInt64` columns, ignores null source values, collapses duplicates,
+and serializes the distinct set as a roaring bitmap. `randgen_column_choice`
+samples that serialized value with replacement. An empty roaring set is valid
+aggregate output, but sampling from it returns a DataFusion error because there
+is no value to choose.
 
 `randgen_nullable` wraps any generator or expression and randomly replaces rows
 with null. The probability must be finite and inside `0.0..=1.0`; a probability
@@ -127,8 +140,12 @@ FROM generate_series(1, 100);
 SELECT randgen_nullable(randgen_int64_uniform(1, 10), 0.25)
 FROM generate_series(1, 100);
 
-SELECT randgen_column_choice('/warehouse/users.parquet', 'user_id')
-FROM generate_series(1, 100);
+WITH choices AS (
+  SELECT randgen_roaring_agg(user_id) AS user_ids
+  FROM users
+)
+SELECT randgen_column_choice(user_ids)
+FROM choices, generate_series(1, 100);
 ```
 
 For row-wise generators, column arguments work the same way as constants:
@@ -162,6 +179,7 @@ Test the optional column-choice features with:
 cargo test --features column-choice-parquet --test column_choice_parquet
 cargo test --features column-choice-arrow-ipc --test column_choice_arrow_ipc
 cargo test --all-features --test column_choice_parquet --test column_choice_arrow_ipc
+cargo test --all-features --test column_choice_roaring_agg
 ```
 
 The integration suite includes property tests for every public UDF and a bounded

@@ -2,6 +2,8 @@ use arrow_array::Array;
 use arrow_array::RecordBatch;
 use datafusion::prelude::SessionContext;
 use datafusion_randgen::all_udfs;
+#[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
+use datafusion_randgen::{all_udafs, column_choice_udafs, column_choice_udfs, roaring_agg_udaf};
 
 async fn query_batches(sql: &str) -> Vec<RecordBatch> {
     let ctx = SessionContext::new();
@@ -80,4 +82,45 @@ async fn native_nullability_rejects_bad_sql_probabilities() {
     query_fails("SELECT randgen_int64_uniform(1, 1, -0.1) FROM generate_series(1, 1)").await;
     query_fails("SELECT randgen_int64_uniform(1, 1, 1.1) FROM generate_series(1, 1)").await;
     query_fails("SELECT randgen_bool(0.5, p) FROM (VALUES (CAST(-0.1 AS DOUBLE))) AS t(p)").await;
+}
+
+#[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
+#[tokio::test]
+async fn column_choice_registers_scalar_and_aggregate_functions_separately() {
+    let ctx = SessionContext::new();
+
+    let scalar_udfs = column_choice_udfs();
+    let scalar_names = scalar_udfs.iter().map(|udf| udf.name()).collect::<Vec<_>>();
+    assert_eq!(scalar_names, vec!["randgen_column_choice"]);
+    assert!(!scalar_names.iter().any(|name| name.contains("_cache_")));
+    for udf in scalar_udfs {
+        ctx.register_udf(udf);
+    }
+
+    let aggregate_udfs = column_choice_udafs();
+    let aggregate_names = aggregate_udfs
+        .iter()
+        .map(|udaf| udaf.name())
+        .collect::<Vec<_>>();
+    assert_eq!(aggregate_names, vec!["randgen_roaring_agg"]);
+    for udaf in aggregate_udfs {
+        ctx.register_udaf(udaf);
+    }
+
+    assert_eq!(roaring_agg_udaf().name(), "randgen_roaring_agg");
+    assert_eq!(
+        all_udafs()
+            .iter()
+            .map(|udaf| udaf.name())
+            .collect::<Vec<_>>(),
+        vec!["randgen_roaring_agg"]
+    );
+
+    let all_scalar_udfs = all_udfs();
+    let all_scalar_names = all_scalar_udfs
+        .iter()
+        .map(|udf| udf.name())
+        .collect::<Vec<_>>();
+    assert!(all_scalar_names.contains(&"randgen_column_choice"));
+    assert!(!all_scalar_names.iter().any(|name| name.contains("_cache_")));
 }
