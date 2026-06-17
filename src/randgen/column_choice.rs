@@ -1,8 +1,11 @@
-//! Column choice random generator.
+//! Aggregate-backed column-choice generator.
 //!
-//! `randgen_roaring_agg(source_column)` builds a serialized roaring set.
+//! `randgen_roaring_agg(source_column)` accepts `UInt32` or `UInt64`, ignores
+//! null source rows, and serializes the distinct source values as a roaring set.
 //! `randgen_column_choice(values[, null_probability])` samples with replacement
-//! from that set.
+//! from that set. `Binary` input returns `UInt32`; `LargeBinary` input returns
+//! `UInt64`. Null input values produce null output rows, and empty non-null sets
+//! return an error because there is no value to sample.
 
 use std::any::Any;
 use std::io;
@@ -26,7 +29,7 @@ use roaring::{RoaringBitmap, RoaringTreemap};
 
 use crate::randgen::utils::{NullProbability, coerce_float64_argument, optional_args};
 
-/// `ScalarUDFImpl` for `randgen_column_choice(values[, null_probability])`.
+/// `ScalarUDFImpl` for the `randgen_column_choice` sampler.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ColumnChoice {
     signature: &'static Signature,
@@ -91,7 +94,7 @@ impl Default for RoaringAgg {
     }
 }
 
-/// Builds column-choice scalar UDFs.
+/// Builds the aggregate-backed column-choice scalar UDFs.
 pub fn column_choice_udfs() -> Vec<ScalarUDF> {
     vec![ScalarUDF::from(ColumnChoice::new())]
 }

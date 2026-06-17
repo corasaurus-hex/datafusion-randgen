@@ -1,4 +1,4 @@
-//! List choice random generator.
+//! List-choice generator UDF.
 //!
 //! `randgen_choice(choices[, null_probability])` samples one item from a
 //! `List<T>` and returns type `T`. Non-null lists must contain at least one

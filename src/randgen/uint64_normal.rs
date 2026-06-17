@@ -1,4 +1,4 @@
-//! UInt64 normal-distribution random generator.
+//! UInt64 normal-distribution generator UDF.
 //!
 //! `randgen_uint64_normal(min, max, mean, stddev[, null_probability])` samples
 //! an integer normal distribution centered on `mean` and truncated to the

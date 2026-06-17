@@ -1,4 +1,4 @@
-//! Random nullability wrapper.
+//! Nullability wrapper UDF.
 //!
 //! `randgen_nullable(value, probability)` returns `value` with its original
 //! type and replaces rows with null at the supplied probability. Existing nulls

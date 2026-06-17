@@ -1,4 +1,4 @@
-//! Millisecond timestamp random generator.
+//! Millisecond timestamp generator UDF.
 //!
 //! `randgen_timestamp_millisecond(min, max[, null_probability])` samples from
 //! the inclusive timestamp range `min..=max`. Arguments must use millisecond

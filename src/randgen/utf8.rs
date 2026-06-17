@@ -1,4 +1,4 @@
-//! UTF-8 string random generator.
+//! UTF-8 string generator UDF.
 //!
 //! `randgen_utf8(characters, min_length, max_length[, null_probability])`
 //! builds strings from the distinct characters in `characters`. Lengths are

@@ -1,4 +1,4 @@
-//! Int64 uniform random generator.
+//! Int64 uniform generator UDF.
 //!
 //! `randgen_int64_uniform(min, max[, null_probability])` samples from the
 //! inclusive integer range `min..=max`. Null bounds produce null output for

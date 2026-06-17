@@ -2,9 +2,10 @@
 
 Random data generator UDFs for Apache DataFusion.
 
-The crate exports `ScalarUDF` constructors. It does not modify a
-`SessionContext` or register functions as a side effect. Your DataFusion
-session code chooses which UDFs to register.
+The crate exports DataFusion UDF constructors and leaves registration to the
+caller. It does not modify a `SessionContext` or register functions as a side
+effect. Your DataFusion session code chooses which scalar and aggregate UDFs to
+install.
 
 ## Install
 
@@ -33,9 +34,12 @@ let ctx = SessionContext::new();
 for udf in datafusion_randgen::all_udfs() {
     ctx.register_udf(udf);
 }
+for udaf in datafusion_randgen::all_udafs() {
+    ctx.register_udaf(udaf);
+}
 ```
 
-If you only want part of the set, register individual UDFs:
+If you only want part of the scalar set, register individual UDFs:
 
 ```rust
 ctx.register_udf(datafusion_randgen::int64_uniform_udf());
@@ -44,8 +48,8 @@ ctx.register_udf(datafusion_randgen::utf8_udf());
 
 For column-choice sampling, register `column_choice_udf()` only when you already
 have serialized roaring values. To build the input set in SQL, register
-`column_choice_udfs()` and `column_choice_udafs()`, or register all aggregates
-with `all_udafs()`:
+`column_choice_udfs()` and `column_choice_udafs()`, or use `all_udfs()` and
+`all_udafs()`:
 
 ```rust
 for udf in datafusion_randgen::column_choice_udfs() {

@@ -1,4 +1,4 @@
-//! Date32 random generator.
+//! Date32 generator UDF.
 //!
 //! `randgen_date32(min, max[, null_probability])` samples a date from the
 //! inclusive day range `min..=max`. Null bounds produce null output for that

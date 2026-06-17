@@ -2,7 +2,7 @@
 //!
 //! The crate exports DataFusion UDF constructors. It does not register
 //! functions or own a `SessionContext`; your DataFusion session code chooses
-//! which generators to install.
+//! which scalar and aggregate generators to install.
 //!
 //! ```no_run
 //! use datafusion::prelude::SessionContext;
@@ -16,11 +16,11 @@
 //! }
 //! ```
 //!
-//! Exported UDFs are volatile. For row-wise generators, null required inputs
-//! produce null output for that row. Invalid ranges and distribution parameters
-//! return DataFusion errors.
+//! Scalar generators are volatile. For row-wise generators, null required
+//! inputs produce null output for that row. Invalid ranges and distribution
+//! parameters return DataFusion errors.
 //!
-//! Generator UDFs except `randgen_nullable` accept an optional trailing
+//! Scalar generator UDFs except `randgen_nullable` accept an optional trailing
 //! `null_probability Float64` argument. When supplied, each generated row is
 //! null with that probability. The probability may be scalar or row-wise, and
 //! must be finite and inside `0.0..=1.0`. A null probability value produces
@@ -29,8 +29,9 @@
 //! nullability must wrap an arbitrary expression.
 //!
 //! With `column-choice-parquet` or `column-choice-arrow-ipc` enabled,
-//! `randgen_roaring_agg(source_column)` builds a serialized roaring set and
-//! `randgen_column_choice(values[, null_probability])` samples from it.
+//! `randgen_roaring_agg(source_column)` serializes the distinct non-null
+//! `UInt32` or `UInt64` source values. `randgen_column_choice(values[,
+//! null_probability])` samples from that serialized set.
 
 #![deny(missing_docs)]
 
@@ -51,10 +52,10 @@ pub use crate::randgen::uint64_normal::UInt64Normal;
 pub use crate::randgen::uint64_uniform::UInt64Uniform;
 pub use crate::randgen::utf8::Utf8;
 
-/// Concrete implementation modules for the exported random generator UDFs.
+/// Implementation modules for the exported UDFs.
 ///
-/// Prefer the top-level `*_udf` constructors or [`all_udfs`]. The module stays
-/// public for callers that need direct access to the `ScalarUDFImpl` types.
+/// Prefer the top-level `*_udf` constructors, [`all_udfs`], or [`all_udafs`].
+/// This module stays public for callers that need direct implementation types.
 pub mod randgen;
 
 /// Builds `randgen_int64_uniform(min, max[, null_probability])`.
@@ -157,14 +158,15 @@ pub fn nullable_udf() -> ScalarUDF {
 
 /// Builds `randgen_column_choice(values[, null_probability])`.
 ///
-/// Samples with replacement from a scalar serialized roaring set produced by
-/// `randgen_roaring_agg`.
+/// The UDF samples with replacement from a serialized roaring value produced by
+/// `randgen_roaring_agg`. `Binary` input returns `UInt32`; `LargeBinary` input
+/// returns `UInt64`.
 #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
 pub fn column_choice_udf() -> ScalarUDF {
     ScalarUDF::from(ColumnChoice::new())
 }
 
-/// Builds column-choice scalar UDFs.
+/// Builds the column-choice scalar UDFs enabled for this build.
 #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
 pub fn column_choice_udfs() -> Vec<ScalarUDF> {
     crate::randgen::column_choice::column_choice_udfs()
@@ -172,14 +174,15 @@ pub fn column_choice_udfs() -> Vec<ScalarUDF> {
 
 /// Builds `randgen_roaring_agg(source_column)`.
 ///
-/// The aggregate accepts `UInt32` or `UInt64` and returns a serialized roaring
-/// value for `randgen_column_choice`.
+/// The aggregate ignores null source rows and serializes distinct values for
+/// `randgen_column_choice`. `UInt32` input returns `Binary`; `UInt64` input
+/// returns `LargeBinary`.
 #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
 pub fn roaring_agg_udaf() -> AggregateUDF {
     AggregateUDF::from(RoaringAgg::new())
 }
 
-/// Builds column-choice aggregate UDFs.
+/// Builds the column-choice aggregate UDFs enabled for this build.
 #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
 pub fn column_choice_udafs() -> Vec<AggregateUDF> {
     vec![roaring_agg_udaf()]
@@ -204,8 +207,8 @@ pub fn timestamp_millisecond_udf() -> ScalarUDF {
 
 /// Builds all scalar UDFs exported by this crate.
 ///
-/// Register these when a session should expose the whole generator set. With
-/// a column-choice source feature enabled, the list includes
+/// Register these when a session should expose every scalar generator. With a
+/// column-choice source feature enabled, the list includes
 /// `randgen_column_choice`. Use [`all_udafs`] to register aggregate UDFs.
 pub fn all_udfs() -> Vec<ScalarUDF> {
     let udfs = vec![
@@ -233,7 +236,11 @@ pub fn all_udfs() -> Vec<ScalarUDF> {
     udfs
 }
 
-/// Builds all aggregate UDFs exported by this crate.
+/// Builds all aggregate UDFs exported by enabled features.
+///
+/// Without a column-choice feature, this returns an empty list. With
+/// `column-choice-parquet` or `column-choice-arrow-ipc`, it returns
+/// `randgen_roaring_agg`.
 pub fn all_udafs() -> Vec<AggregateUDF> {
     let udafs = vec![];
 

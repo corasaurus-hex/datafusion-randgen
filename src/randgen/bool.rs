@@ -1,4 +1,4 @@
-//! Boolean random generator.
+//! Boolean generator UDF.
 //!
 //! `randgen_bool(probability[, null_probability])` returns `true` with the
 //! supplied probability. The optional second probability controls null output.

@@ -9,5 +9,6 @@ Run it with:
 cargo run --manifest-path proofs/vortex-null-overlay/Cargo.toml
 ```
 
-It is not part of normal CI because Vortex is outside this crate's dependency
-surface, has a newer MSRV than this crate, and compiles a large dependency graph.
+This proof is not part of normal CI because Vortex is outside this crate's
+dependency surface, has a newer MSRV than this crate, and compiles a large
+dependency graph.

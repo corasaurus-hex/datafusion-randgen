@@ -1,36 +1,35 @@
-//! Concrete `ScalarUDFImpl` types for the random generators.
+//! UDF implementation modules.
 //!
 //! The top-level constructors wrap these modules. They stay public for callers
-//! that need direct access to a UDF implementation type. Registration code can
-//! use `datafusion_randgen::all_udfs()` or one of the `*_udf` helpers.
+//! that need direct access to a UDF implementation type.
 
-/// Implementation for `randgen_bool`.
+/// Boolean generator implementation.
 pub mod bool;
-/// Implementation for `randgen_choice`.
+/// List-choice generator implementation.
 pub mod choice;
 #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
-/// Implementation for `randgen_column_choice`.
+/// Aggregate-backed column-choice implementation.
 pub mod column_choice;
-/// Implementation for `randgen_date32`.
+/// Date32 generator implementation.
 pub mod date32;
-/// Implementation for `randgen_float64_normal`.
+/// Float64 normal generator implementation.
 pub mod float64_normal;
-/// Implementation for `randgen_float64_uniform`.
+/// Float64 uniform generator implementation.
 pub mod float64_uniform;
-/// Implementation for `randgen_int64_normal`.
+/// Int64 normal generator implementation.
 pub mod int64_normal;
-/// Implementation for `randgen_int64_uniform`.
+/// Int64 uniform generator implementation.
 pub mod int64_uniform;
 pub(crate) mod integer_normal;
-/// Implementation for `randgen_nullable`.
+/// Nullability wrapper implementation.
 pub mod nullable;
-/// Implementation for `randgen_timestamp_millisecond`.
+/// Millisecond timestamp generator implementation.
 pub mod timestamp_millisecond;
-/// Implementation for `randgen_uint64_normal`.
+/// UInt64 normal generator implementation.
 pub mod uint64_normal;
-/// Implementation for `randgen_uint64_uniform`.
+/// UInt64 uniform generator implementation.
 pub mod uint64_uniform;
-/// Implementation for `randgen_utf8`.
+/// UTF-8 string generator implementation.
 pub mod utf8;
 pub(crate) mod utils;
 

@@ -1,4 +1,4 @@
-//! Float64 normal-distribution random generator.
+//! Float64 normal-distribution generator UDF.
 //!
 //! `randgen_float64_normal(mean, stddev[, null_probability])` samples from a
 //! normal distribution. Both required arguments must be finite, and `stddev`

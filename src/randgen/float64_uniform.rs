@@ -1,4 +1,4 @@
-//! Float64 uniform random generator.
+//! Float64 uniform generator UDF.
 //!
 //! `randgen_float64_uniform(min, max[, null_probability])` samples from the
 //! inclusive range `min..=max`. Bounds must be finite, the span must be finite,
