@@ -219,7 +219,7 @@ just coverage
 ```
 
 Run `cargo package --list --locked` to check package contents. The published
-crate excludes benchmarks, integration tests, proofs, and fuzz targets.
+crate excludes benchmarks, integration tests, and fuzz targets.
 
 Fuzzing uses `cargo-fuzz` with separate targets for the direct Rust API and the
 SQL API:
