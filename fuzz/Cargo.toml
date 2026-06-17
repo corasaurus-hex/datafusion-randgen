@@ -1,0 +1,34 @@
+[package]
+name = "datafusion-randgen-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1.4.2", features = ["derive"] }
+arrow-array = { version = "58.0.0", default-features = false }
+arrow-schema = { version = "58.0.0", default-features = false }
+datafusion = { version = "53.1.0", default-features = false, features = ["sql", "nested_expressions"] }
+datafusion-common = { version = "53.1.0", default-features = false }
+datafusion-expr = { version = "53.1.0", default-features = false }
+datafusion-randgen = { path = "..", features = ["column-choice-arrow-ipc", "column-choice-parquet"] }
+libfuzzer-sys = "0.4"
+roaring = "=0.11.3"
+tokio = { version = "1.42.0", features = ["full"] }
+
+[[bin]]
+name = "direct_api"
+path = "fuzz_targets/direct_api.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sql_api"
+path = "fuzz_targets/sql_api.rs"
+test = false
+doc = false
+bench = false

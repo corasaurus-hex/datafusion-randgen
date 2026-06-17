@@ -1,0 +1,51 @@
+name: Stress tests
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  stress:
+    name: Stress
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Run direct Rust API and SQL stress tests
+        run: just stress-all
+
+  soak:
+    name: Soak
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Run bounded repeated large-batch soak tests
+        run: just soak-all
+        env:
+          RANDGEN_SOAK_ITERATIONS: 10
+          RANDGEN_SOAK_ROWS: 8192
+          RANDGEN_SQL_SOAK_ITERATIONS: 10
+          RANDGEN_SQL_SOAK_ROWS: 4096

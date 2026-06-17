@@ -174,8 +174,10 @@ The task runs:
 
 - `cargo fmt --check`
 - `cargo check --all-targets`
-- `cargo clippy --all-targets -- -D warnings`
+- `cargo check --all-targets --all-features`
+- `cargo clippy --all-targets --all-features -- -D warnings`
 - `cargo nextest run --all-targets`
+- `cargo nextest run --all-targets --all-features`
 
 Test the optional column-choice features with:
 
@@ -186,17 +188,30 @@ cargo test --all-features --test column_choice_parquet --test column_choice_arro
 cargo test --all-features --test column_choice_roaring_agg
 ```
 
-The integration suite includes property tests for every public UDF and a bounded
-stress test over larger batches. Run the longer soak pass explicitly:
+The integration suite includes property tests for every public UDF plus direct
+Rust API and SQL stress tests over larger batches:
+
+```bash
+just stress
+just stress-sql
+just stress-column-choice
+just stress-all
+```
+
+Run the longer repeated soak passes explicitly:
 
 ```bash
 just soak
+just soak-sql
+just soak-all
 RANDGEN_SOAK_ITERATIONS=100 RANDGEN_SOAK_ROWS=16384 just soak
+RANDGEN_SQL_SOAK_ITERATIONS=100 RANDGEN_SQL_SOAK_ROWS=8192 just soak-sql
 ```
 
 Release checks:
 
 ```bash
+just release-check
 cargo publish --dry-run --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 cargo deny check
@@ -204,7 +219,18 @@ just coverage
 ```
 
 Run `cargo package --list --locked` to check package contents. The published
-crate excludes benchmarks and integration tests.
+crate excludes benchmarks, integration tests, proofs, and fuzz targets.
+
+Fuzzing uses `cargo-fuzz` with separate targets for the direct Rust API and the
+SQL API:
+
+```bash
+cargo install cargo-fuzz
+rustup toolchain install nightly
+just fuzz-smoke
+cargo +nightly fuzz run direct_api
+cargo +nightly fuzz run sql_api
+```
 
 `deny.toml` contains one advisory ignore for `paste`, which `datafusion 53.1.0`
 pulls in. The advisory marks `paste` unmaintained and lists no safe upgrade.
