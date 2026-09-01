@@ -119,9 +119,9 @@ jobs:
         with:
           tool: cargo-fuzz
       - name: Smoke direct Rust API fuzz target
-        run: cargo +nightly fuzz run direct_api -- -runs=256
+        run: cargo +nightly fuzz run direct_api --target x86_64-unknown-linux-gnu -- -runs=256
       - name: Smoke SQL API fuzz target
-        run: cargo +nightly fuzz run sql_api -- -runs=64
+        run: cargo +nightly fuzz run sql_api --target x86_64-unknown-linux-gnu -- -runs=64
 
   coverage:
     name: Code coverage
