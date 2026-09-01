@@ -7,7 +7,6 @@
 //! `UInt64`. Null input values produce null output rows, and empty non-null sets
 //! return an error because there is no value to sample.
 
-use std::any::Any;
 use std::io;
 use std::sync::{Arc, LazyLock};
 
@@ -24,7 +23,8 @@ use datafusion_expr::{
     ScalarUDFImpl, Signature, Volatility,
     function::{AccumulatorArgs, StateFieldsArgs},
 };
-use rand::Rng;
+use datafusion_roaring::{decode_bitmap, encode_bitmap};
+use rand::{Rng, RngExt};
 use roaring::{RoaringBitmap, RoaringTreemap};
 
 use crate::randgen::utils::{NullProbability, coerce_float64_argument, optional_args};
@@ -101,19 +101,6 @@ pub fn column_choice_udfs() -> Vec<ScalarUDF> {
 
 fn io_error(name: &str, action: &str, error: io::Error) -> DataFusionError {
     DataFusionError::Execution(format!("{name} could not {action}: {error}"))
-}
-
-fn serialize_bitmap(values: &RoaringBitmap, name: &str) -> Result<Vec<u8>> {
-    let mut bytes = Vec::with_capacity(values.serialized_size());
-    values
-        .serialize_into(&mut bytes)
-        .map_err(|error| io_error(name, "serialize UInt32 roaring set", error))?;
-    Ok(bytes)
-}
-
-fn deserialize_bitmap(bytes: &[u8], name: &str) -> Result<RoaringBitmap> {
-    RoaringBitmap::deserialize_from(bytes)
-        .map_err(|error| io_error(name, "deserialize UInt32 roaring set", error))
 }
 
 fn serialize_treemap(values: &RoaringTreemap, name: &str) -> Result<Vec<u8>> {
@@ -228,9 +215,7 @@ impl ColumnValues {
 
 fn scalar_binary_values(value: &ScalarValue, name: &str) -> Result<Option<ColumnValues>> {
     match value {
-        ScalarValue::Binary(Some(bytes)) => {
-            Ok(Some(ColumnValues::UInt32(deserialize_bitmap(bytes, name)?)))
-        }
+        ScalarValue::Binary(Some(bytes)) => Ok(Some(ColumnValues::UInt32(decode_bitmap(bytes)?))),
         ScalarValue::Binary(None) => Ok(None),
         ScalarValue::LargeBinary(Some(bytes)) => Ok(Some(ColumnValues::UInt64(
             deserialize_treemap(bytes, name)?,
@@ -256,7 +241,7 @@ fn sample_binary_array(
             output.push(None);
             continue;
         }
-        let choices = ColumnValues::UInt32(deserialize_bitmap(values.value(row), name)?);
+        let choices = ColumnValues::UInt32(decode_bitmap(values.value(row))?);
         let ScalarValue::UInt32(value) = choices.sample_one(name, &mut rng)? else {
             return internal_err!("{name} sampled non-UInt32 value from Binary input");
         };
@@ -329,10 +314,7 @@ impl Accumulator for RoaringAggAccumulator {
 
     fn evaluate(&mut self) -> Result<ScalarValue> {
         match self {
-            Self::UInt32(values) => Ok(ScalarValue::Binary(Some(serialize_bitmap(
-                values,
-                "randgen_roaring_agg",
-            )?))),
+            Self::UInt32(values) => Ok(ScalarValue::Binary(Some(encode_bitmap(values)?))),
             Self::UInt64(values) => Ok(ScalarValue::LargeBinary(Some(serialize_treemap(
                 values,
                 "randgen_roaring_agg",
@@ -368,7 +350,7 @@ impl Accumulator for RoaringAggAccumulator {
                 let states = states[0].as_any().downcast_ref::<BinaryArray>().unwrap();
                 for row in 0..states.len() {
                     if !states.is_null(row) {
-                        *output |= &deserialize_bitmap(states.value(row), "randgen_roaring_agg")?;
+                        *output |= &decode_bitmap(states.value(row))?;
                     }
                 }
             }
@@ -396,10 +378,6 @@ impl Accumulator for RoaringAggAccumulator {
 }
 
 impl AggregateUDFImpl for RoaringAgg {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "randgen_roaring_agg"
     }
@@ -452,10 +430,6 @@ impl AggregateUDFImpl for RoaringAgg {
 }
 
 impl ScalarUDFImpl for ColumnChoice {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "randgen_column_choice"
     }

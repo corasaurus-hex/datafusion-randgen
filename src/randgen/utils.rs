@@ -7,8 +7,8 @@ use arrow_array::{Array, ArrayRef, PrimitiveArray};
 use arrow_schema::DataType;
 use datafusion_common::{Result, ScalarValue, exec_err, internal_err};
 use datafusion_expr::ColumnarValue;
-use rand::Rng;
 use rand::distr::uniform::SampleUniform;
+use rand::{Rng, RngExt};
 
 pub(crate) fn exact_args<const N: usize>(
     args: Vec<ColumnarValue>,

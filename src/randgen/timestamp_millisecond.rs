@@ -5,7 +5,6 @@
 //! precision and matching timezones. Null bounds produce null output for that
 //! row. The optional null probability must be finite and within `0.0..=1.0`.
 
-use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
 use arrow_array::cast::AsArray;
@@ -119,10 +118,6 @@ impl TimestampMillisecond {
 }
 
 impl ScalarUDFImpl for TimestampMillisecond {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "randgen_timestamp_millisecond"
     }

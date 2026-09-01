@@ -158,9 +158,10 @@ pub fn nullable_udf() -> ScalarUDF {
 
 /// Builds `randgen_column_choice(values[, null_probability])`.
 ///
-/// The UDF samples with replacement from a serialized roaring value produced by
-/// `randgen_roaring_agg`. `Binary` input returns `UInt32`; `LargeBinary` input
-/// returns `UInt64`.
+/// The UDF samples with replacement from a serialized roaring value. `Binary`
+/// input uses the `datafusion-roaring` 0.1 format and returns `UInt32`;
+/// `LargeBinary` input uses this crate's roaring-treemap format and returns
+/// `UInt64`.
 #[cfg(any(feature = "column-choice-parquet", feature = "column-choice-arrow-ipc"))]
 pub fn column_choice_udf() -> ScalarUDF {
     ScalarUDF::from(ColumnChoice::new())

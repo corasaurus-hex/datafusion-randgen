@@ -6,7 +6,6 @@
 //! range. A null required argument produces null output for that row. The
 //! optional null probability must be finite and within `0.0..=1.0`.
 
-use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
 use arrow_array::cast::AsArray;
@@ -117,9 +116,6 @@ impl Int64Normal {
 }
 
 impl ScalarUDFImpl for Int64Normal {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
     fn name(&self) -> &str {
         "randgen_int64_normal"
     }

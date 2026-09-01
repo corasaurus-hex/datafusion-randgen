@@ -1,5 +1,5 @@
 use datafusion_common::{Result, exec_err};
-use rand::Rng;
+use rand::{Rng, RngExt};
 use rand_distr::Normal;
 
 const MAX_REJECTION_ATTEMPTS: usize = 4_096;

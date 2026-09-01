@@ -8,7 +8,8 @@ use arrow_schema::{DataType, Field, Schema};
 use datafusion::datasource::MemTable;
 use datafusion::prelude::SessionContext;
 use datafusion_randgen::{column_choice_udafs, column_choice_udfs};
-use roaring::{RoaringBitmap, RoaringTreemap};
+use datafusion_roaring::decode_bitmap;
+use roaring::RoaringTreemap;
 
 fn context_with_column_choice() -> SessionContext {
     let ctx = SessionContext::new();
@@ -120,7 +121,7 @@ async fn roaring_agg_uint32_serializes_distinct_non_null_values() {
 
     let batches = collect(&ctx, "SELECT randgen_roaring_agg(id) FROM source").await;
     assert_eq!(batches[0].column(0).data_type(), &DataType::Binary);
-    let bitmap = RoaringBitmap::deserialize_from(first_binary_value(&batches).as_slice()).unwrap();
+    let bitmap = decode_bitmap(first_binary_value(&batches).as_slice()).unwrap();
 
     assert_eq!(bitmap.iter().collect::<Vec<_>>(), vec![7, 9]);
 }
@@ -160,7 +161,7 @@ async fn roaring_agg_all_null_group_serializes_empty_set() {
     );
 
     let batches = collect(&ctx, "SELECT randgen_roaring_agg(id) FROM source").await;
-    let bitmap = RoaringBitmap::deserialize_from(first_binary_value(&batches).as_slice()).unwrap();
+    let bitmap = decode_bitmap(first_binary_value(&batches).as_slice()).unwrap();
 
     assert!(bitmap.is_empty());
 }
@@ -182,6 +183,32 @@ async fn column_choice_samples_uint32_aggregate_values() {
     .await;
 
     let allowed = HashSet::from([3, 5]);
+    assert!(
+        u32_values(&batches)
+            .into_iter()
+            .all(|value| value.is_some_and(|value| allowed.contains(&value)))
+    );
+}
+
+#[tokio::test]
+async fn column_choice_samples_datafusion_roaring_values() {
+    let ctx = SessionContext::new();
+    ctx.register_udf(datafusion_randgen::column_choice_udf());
+    ctx.register_udaf(datafusion_roaring::roaring_agg_udaf());
+    register_u32_table(
+        &ctx,
+        "source",
+        UInt32Array::from(vec![Some(11), Some(13), None]),
+    );
+
+    let batches = collect(
+        &ctx,
+        "WITH choices AS (SELECT roaring_agg(id) AS ids FROM source) \
+         SELECT randgen_column_choice(ids) FROM choices, generate_series(1, 128)",
+    )
+    .await;
+
+    let allowed = HashSet::from([11, 13]);
     assert!(
         u32_values(&batches)
             .into_iter()

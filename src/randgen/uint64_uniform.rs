@@ -6,7 +6,6 @@
 //! `UInt64` values or nonnegative signed integer values. The optional null
 //! probability must be finite and within `0.0..=1.0`.
 
-use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
 use arrow_array::cast::AsArray;
@@ -65,10 +64,6 @@ impl UInt64Uniform {
 }
 
 impl ScalarUDFImpl for UInt64Uniform {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "randgen_uint64_uniform"
     }

@@ -6,7 +6,6 @@
 //! that row. The optional null probability must be finite and within
 //! `0.0..=1.0`.
 
-use std::any::Any;
 use std::sync::LazyLock;
 
 use arrow_array::cast::AsArray;
@@ -126,9 +125,6 @@ impl Float64Normal {
 }
 
 impl ScalarUDFImpl for Float64Normal {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
     fn name(&self) -> &str {
         "randgen_float64_normal"
     }

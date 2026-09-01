@@ -5,8 +5,6 @@
 //! that row. Non-null bounds must satisfy `min <= max`. The optional null
 //! probability must be finite and within `0.0..=1.0`.
 
-use std::any::Any;
-
 use arrow_array::cast::AsArray;
 use arrow_array::types::Int64Type;
 use arrow_schema::DataType;
@@ -73,10 +71,6 @@ impl Int64Uniform {
 }
 
 impl ScalarUDFImpl for Int64Uniform {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "randgen_int64_uniform"
     }

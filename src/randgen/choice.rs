@@ -5,7 +5,6 @@
 //! element. Null lists produce null output for that row. The optional null
 //! probability must be finite and within `0.0..=1.0`.
 
-use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
 use arrow_array::builder::StringBuilder;
@@ -18,7 +17,7 @@ use datafusion_common::{ScalarValue, exec_err, internal_err, plan_err};
 use datafusion_expr::{
     ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDFImpl, Signature, Volatility,
 };
-use rand::Rng;
+use rand::RngExt;
 
 use crate::randgen::utils::{NullProbability, coerce_float64_argument, optional_args};
 
@@ -142,10 +141,6 @@ impl Default for Choice {
 }
 
 impl ScalarUDFImpl for Choice {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "randgen_choice"
     }

@@ -7,7 +7,6 @@
 //! `Utf8` offset limit. The optional null probability must be finite and within
 //! `0.0..=1.0`.
 
-use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::sync::{Arc, LazyLock};
@@ -21,7 +20,7 @@ use datafusion_common::{DataFusionError, Result, ScalarValue};
 use datafusion_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
 };
-use rand::Rng;
+use rand::RngExt;
 
 use crate::randgen::utils::{NullProbability, optional_args, three_array_args};
 
@@ -176,10 +175,6 @@ impl Utf8 {
 }
 
 impl ScalarUDFImpl for Utf8 {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "randgen_utf8"
     }

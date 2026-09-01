@@ -15,32 +15,33 @@ keywords = ["datafusion", "random", "data", "generator"]
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/corasaurus-hex/datafusion-randgen"
-rust-version = "1.89.0"
+rust-version = "1.94.0"
 description = "Random data generator UDFs for Apache DataFusion"
 
 [features]
 default = []
-column-choice-arrow-ipc = ["dep:arrow-ipc", "dep:roaring"]
-column-choice-parquet = ["dep:parquet", "dep:roaring"]
+column-choice-arrow-ipc = ["dep:arrow-ipc", "dep:datafusion-roaring", "dep:roaring"]
+column-choice-parquet = ["dep:datafusion-roaring", "dep:parquet", "dep:roaring"]
 
 [dependencies]
-arrow-array = { version = "58.3.0", default-features = false }
-arrow-ipc = { version = "58.3.0", optional = true, default-features = false }
-arrow-schema = { version = "58.3.0", default-features = false }
-datafusion-common = { version = "53.1.0", default-features = false }
-datafusion-expr = { version = "53.1.0", default-features = false }
-parquet = { version = "58.3.0", optional = true, default-features = false, features = ["arrow", "snap"] }
-rand = "0.9.4"
-rand_distr = "0.5.1"
-roaring = { version = "=0.11.3", optional = true }
+arrow-array = { version = "59.2.0", default-features = false }
+arrow-ipc = { version = "59.2.0", optional = true, default-features = false }
+arrow-schema = { version = "59.2.0", default-features = false }
+datafusion-common = { version = "55.0.0", default-features = false }
+datafusion-expr = { version = "55.0.0", default-features = false }
+datafusion-roaring = { version = "0.1.0", optional = true }
+parquet = { version = "59.2.0", optional = true, default-features = false, features = ["arrow", "snap"] }
+rand = "0.10.2"
+rand_distr = "0.6.0"
+roaring = { version = "0.11.5", optional = true }
 
 [dev-dependencies]
-arrow-buffer = { version = "58.3.0", default-features = false }
-arrow-ipc = { version = "58.3.0", default-features = false }
+arrow-buffer = { version = "59.2.0", default-features = false }
+arrow-ipc = { version = "59.2.0", default-features = false }
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
-datafusion = { version = "53.1.0", default-features = false, features = ["sql", "nested_expressions"] }
+datafusion = { version = "55.0.0", default-features = false, features = ["sql", "nested_expressions"] }
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
-tokio = { version = "1.52.3", features = ["full"] }
+tokio = { version = "1.53.1", features = ["full"] }
 
 [[bench]]
 name = "udfs"

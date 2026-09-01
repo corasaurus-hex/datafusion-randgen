@@ -5,7 +5,6 @@
 //! and `min` must not exceed `max`. Null bounds produce null output for that
 //! row. The optional null probability must be finite and within `0.0..=1.0`.
 
-use std::any::Any;
 use std::sync::LazyLock;
 
 use arrow_array::cast::AsArray;
@@ -16,7 +15,7 @@ use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
 };
-use rand::Rng;
+use rand::RngExt;
 use std::sync::Arc;
 
 use crate::randgen::utils::{NullProbability, optional_args, two_array_args};
@@ -109,9 +108,6 @@ impl Float64Uniform {
 }
 
 impl ScalarUDFImpl for Float64Uniform {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
     fn name(&self) -> &str {
         "randgen_float64_uniform"
     }

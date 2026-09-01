@@ -5,7 +5,6 @@
 //! Both probabilities must be finite and within `0.0..=1.0`; a null probability
 //! value produces null output for that row.
 
-use std::any::Any;
 use std::sync::LazyLock;
 
 use arrow_array::cast::AsArray;
@@ -16,7 +15,7 @@ use datafusion_common::{Result, ScalarValue, exec_err};
 use datafusion_expr::{
     ColumnarValue, ScalarFunctionArgs, ScalarUDFImpl, Signature, TypeSignature, Volatility,
 };
-use rand::Rng;
+use rand::RngExt;
 use std::sync::Arc;
 
 use crate::randgen::utils::{NullProbability, one_array_arg, optional_args};
@@ -87,10 +86,6 @@ impl Bool {
 }
 
 impl ScalarUDFImpl for Bool {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "randgen_bool"
     }

@@ -16,6 +16,7 @@ use datafusion_randgen::{
     Bool, Choice, ColumnChoice, Date32, Float64Normal, Float64Uniform, Int64Normal, Int64Uniform,
     Nullable, TimestampMillisecond, UInt64Normal, UInt64Uniform, Utf8,
 };
+use datafusion_roaring::encode_bitmap;
 use libfuzzer_sys::fuzz_target;
 use roaring::{RoaringBitmap, RoaringTreemap};
 
@@ -582,9 +583,7 @@ fn bitmap_bytes(values: &[u32]) -> Vec<u8> {
     for value in values {
         bitmap.insert(*value);
     }
-    let mut bytes = Vec::with_capacity(bitmap.serialized_size());
-    bitmap.serialize_into(&mut bytes).unwrap();
-    bytes
+    encode_bitmap(&bitmap).unwrap()
 }
 
 fn treemap_bytes(values: &[u64]) -> Vec<u8> {

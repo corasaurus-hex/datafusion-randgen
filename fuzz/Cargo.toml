@@ -9,15 +9,16 @@ cargo-fuzz = true
 
 [dependencies]
 arbitrary = { version = "1.4.2", features = ["derive"] }
-arrow-array = { version = "58.3.0", default-features = false }
-arrow-schema = { version = "58.3.0", default-features = false }
-datafusion = { version = "53.1.0", default-features = false, features = ["sql", "nested_expressions"] }
-datafusion-common = { version = "53.1.0", default-features = false }
-datafusion-expr = { version = "53.1.0", default-features = false }
+arrow-array = { version = "59.2.0", default-features = false }
+arrow-schema = { version = "59.2.0", default-features = false }
+datafusion = { version = "55.0.0", default-features = false, features = ["sql", "nested_expressions"] }
+datafusion-common = { version = "55.0.0", default-features = false }
+datafusion-expr = { version = "55.0.0", default-features = false }
 datafusion-randgen = { path = "..", features = ["column-choice-arrow-ipc", "column-choice-parquet"] }
-libfuzzer-sys = "0.4"
-roaring = "=0.11.3"
-tokio = { version = "1.52.3", features = ["full"] }
+datafusion-roaring = "0.1.0"
+libfuzzer-sys = "0.4.13"
+roaring = "0.11.5"
+tokio = { version = "1.53.1", features = ["full"] }
 
 [[bin]]
 name = "direct_api"

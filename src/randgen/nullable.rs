@@ -5,7 +5,6 @@
 //! stay null. Rows that become null are rebuilt as null values instead of only
 //! overlaying a validity bitmap on the input array.
 
-use std::any::Any;
 use std::sync::{Arc, LazyLock};
 
 use arrow_array::{Array, ArrayRef, new_empty_array};
@@ -71,10 +70,6 @@ impl Default for Nullable {
 }
 
 impl ScalarUDFImpl for Nullable {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn name(&self) -> &str {
         "randgen_nullable"
     }

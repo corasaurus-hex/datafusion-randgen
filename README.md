@@ -43,7 +43,7 @@ ctx.register_udf(datafusion_randgen::int64_uniform_udf());
 ctx.register_udf(datafusion_randgen::utf8_udf());
 ```
 
-For column-choice sampling, register `column_choice_udf()` only when you already have serialized roaring values. To build the input set in SQL, register `column_choice_udfs()` and `column_choice_udafs()`, or use `all_udfs()` and `all_udafs()`:
+For column-choice sampling, register `column_choice_udf()` only when you already have serialized roaring values. `Binary` values use the versioned format from `datafusion-roaring 0.1`, so they can come from either `datafusion_roaring::roaring_agg_udaf()` or this crate's `randgen_roaring_agg`. To build the input set in SQL with the randgen-prefixed aggregate, register `column_choice_udfs()` and `column_choice_udafs()`, or use `all_udfs()` and `all_udafs()`:
 
 ```rust
 for udf in datafusion_randgen::column_choice_udfs() {
@@ -73,7 +73,7 @@ Generator UDFs except `randgen_nullable` accept an optional trailing `null_proba
 | `randgen_choice`                | `choices List<T>[, null_probability Float64]`                                        | `T`                       | Samples one element from a non-empty list for each row.                                   |
 | `randgen_nullable`              | `value T, probability Float64`                                                       | `T`                       | Rebuilds null rows safely around any expression; preserves existing nulls.                |
 | `randgen_roaring_agg`           | `source_column UInt32 or UInt64`                                                     | `Binary` or `LargeBinary` | Feature-gated aggregate; builds a serialized roaring set of distinct non-null values.     |
-| `randgen_column_choice`         | `values Binary or LargeBinary[, null_probability Float64]`                           | `UInt32` or `UInt64`      | Feature-gated; samples values produced by `randgen_roaring_agg`.                          |
+| `randgen_column_choice`         | `values Binary or LargeBinary[, null_probability Float64]`                           | `UInt32` or `UInt64`      | Feature-gated; samples compatible serialized roaring values.                              |
 | `randgen_date32`                | `min Date32, max Date32[, null_probability Float64]`                                 | `Date32`                  | Requires `min <= max`; samples from the inclusive day range.                              |
 | `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)[, null_probability Float64]` | `Timestamp(Millisecond)`  | Requires matching timestamp timezones and `min <= max`.                                   |
 
@@ -83,7 +83,7 @@ For integer normal generators, `min..=max` is a truncation bound, not an input u
 
 Choose `randgen_int64_uniform` or `randgen_uint64_uniform` when every integer in a large range must be directly representable. Integer normal sampling is f64-backed and inherits f64 spacing limits for very large magnitudes.
 
-Column-choice sampling requires at least one column-choice feature: `column-choice-parquet` or `column-choice-arrow-ipc`. The aggregate accepts `UInt32` and `UInt64` columns, ignores null source values, collapses duplicates, and serializes the distinct set as a roaring bitmap. `randgen_column_choice` samples that serialized value with replacement. An empty roaring set is valid aggregate output, but sampling from it returns a DataFusion error because there is no value to choose.
+Column-choice sampling requires at least one column-choice feature: `column-choice-parquet` or `column-choice-arrow-ipc`. The aggregate accepts `UInt32` and `UInt64` columns, ignores null source values, collapses duplicates, and serializes the distinct set as a roaring bitmap. The `UInt32` representation is interoperable with `datafusion-roaring 0.1`; the `UInt64` representation remains this crate's `LargeBinary` roaring-treemap format. `randgen_column_choice` samples that serialized value with replacement. An empty roaring set is valid aggregate output, but sampling from it returns a DataFusion error because there is no value to choose.
 
 `randgen_nullable` wraps any generator or expression and randomly replaces rows with null. The probability must be finite and inside `0.0..=1.0`; a probability of `0.0` preserves the input values, and `1.0` returns all nulls. Prefer a generator's native `null_probability` argument when the value comes directly from a randgen UDF. Use `randgen_nullable` when nullability must wrap another expression; it rebuilds null rows instead of only overlaying a validity bitmap.
 
@@ -196,7 +196,7 @@ cargo +nightly fuzz run direct_api
 cargo +nightly fuzz run sql_api
 ```
 
-`deny.toml` contains one advisory ignore for `paste`, which `datafusion 53.1.0` pulls in. The advisory marks `paste` unmaintained and lists no safe upgrade. Drop the ignore once DataFusion stops depending on it. Duplicate dependency versions remain warnings unless they point to a security or size problem.
+`deny.toml` treats duplicate dependency versions as warnings unless they point to a security or size problem. It contains no advisory ignores.
 
 ## License
 
