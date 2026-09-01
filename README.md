@@ -1,0 +1,203 @@
+# datafusion-randgen
+
+Random data generator UDFs for Apache DataFusion.
+
+The crate exports DataFusion UDF constructors and leaves registration to the caller. It does not modify a `SessionContext` or register functions as a side effect. Your DataFusion session code chooses which scalar and aggregate UDFs to install.
+
+## Install
+
+```toml
+[dependencies]
+datafusion-randgen = "0.1.0"
+```
+
+Enable column-choice sampling with feature flags:
+
+```toml
+[dependencies]
+datafusion-randgen = { version = "0.1.0", features = ["column-choice-parquet"] }
+# or
+datafusion-randgen = { version = "0.1.0", features = ["column-choice-arrow-ipc"] }
+# or both
+datafusion-randgen = { version = "0.1.0", features = ["column-choice-parquet", "column-choice-arrow-ipc"] }
+```
+
+## Register
+
+```rust
+use datafusion::prelude::SessionContext;
+
+let ctx = SessionContext::new();
+for udf in datafusion_randgen::all_udfs() {
+    ctx.register_udf(udf);
+}
+for udaf in datafusion_randgen::all_udafs() {
+    ctx.register_udaf(udaf);
+}
+```
+
+If you only want part of the scalar set, register individual UDFs:
+
+```rust
+ctx.register_udf(datafusion_randgen::int64_uniform_udf());
+ctx.register_udf(datafusion_randgen::utf8_udf());
+```
+
+For column-choice sampling, register `column_choice_udf()` only when you already have serialized roaring values. `Binary` values use the versioned format from `datafusion-roaring 0.1`, so they can come from either `datafusion_roaring::roaring_agg_udaf()` or this crate's `randgen_roaring_agg`. To build the input set in SQL with the randgen-prefixed aggregate, register `column_choice_udfs()` and `column_choice_udafs()`, or use `all_udfs()` and `all_udafs()`:
+
+```rust
+for udf in datafusion_randgen::column_choice_udfs() {
+    ctx.register_udf(udf);
+}
+for udaf in datafusion_randgen::column_choice_udafs() {
+    ctx.register_udaf(udaf);
+}
+```
+
+## UDFs
+
+Generators are volatile DataFusion scalar functions. Bounds are inclusive. For row-wise generators, null required arguments produce null output for that row. Invalid parameters return DataFusion errors; generators do not clamp or swap bad ranges.
+
+Generator UDFs except `randgen_nullable` accept an optional trailing `null_probability Float64` argument. It may be a scalar or a column. Values must be finite and inside `0.0..=1.0`; a null probability value produces null output for that row. Native generator nullability is applied while building the array, so generated values are not stored under null rows.
+
+| Function                        | Arguments                                                                            | Returns                   | Rules                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------- |
+| `randgen_int64_uniform`         | `min Int64, max Int64[, null_probability Float64]`                                   | `Int64`                   | Requires `min <= max`; samples from `min..=max`.                                          |
+| `randgen_uint64_uniform`        | `min UInt64, max UInt64[, null_probability Float64]`                                 | `UInt64`                  | Requires `min <= max`; accepts nonnegative signed integer inputs.                         |
+| `randgen_float64_uniform`       | `min Float64, max Float64[, null_probability Float64]`                               | `Float64`                 | Requires finite bounds, finite span, and `min <= max`.                                    |
+| `randgen_float64_normal`        | `mean Float64, stddev Float64[, null_probability Float64]`                           | `Float64`                 | Requires finite arguments and `stddev > 0`.                                               |
+| `randgen_int64_normal`          | `min Int64, max Int64, mean Int64, stddev Float64[, null_probability Float64]`       | `Int64`                   | Requires `min <= max`; samples a rounded f64 normal and rejects values outside the range. |
+| `randgen_uint64_normal`         | `min UInt64, max UInt64, mean UInt64, stddev Float64[, null_probability Float64]`    | `UInt64`                  | Requires `min <= max`; accepts nonnegative signed integer inputs.                         |
+| `randgen_bool`                  | `probability Float64[, null_probability Float64]`                                    | `Boolean`                 | First probability controls true output; optional second probability controls null output. |
+| `randgen_utf8`                  | `characters Utf8, min_length Int64, max_length Int64[, null_probability Float64]`    | `Utf8`                    | Uses the distinct characters from `characters`; requires `0 <= min_length <= max_length`. |
+| `randgen_choice`                | `choices List<T>[, null_probability Float64]`                                        | `T`                       | Samples one element from a non-empty list for each row.                                   |
+| `randgen_nullable`              | `value T, probability Float64`                                                       | `T`                       | Rebuilds null rows safely around any expression; preserves existing nulls.                |
+| `randgen_roaring_agg`           | `source_column UInt32 or UInt64`                                                     | `Binary` or `LargeBinary` | Feature-gated aggregate; builds a serialized roaring set of distinct non-null values.     |
+| `randgen_column_choice`         | `values Binary or LargeBinary[, null_probability Float64]`                           | `UInt32` or `UInt64`      | Feature-gated; samples compatible serialized roaring values.                              |
+| `randgen_date32`                | `min Date32, max Date32[, null_probability Float64]`                                 | `Date32`                  | Requires `min <= max`; samples from the inclusive day range.                              |
+| `randgen_timestamp_millisecond` | `min Timestamp(Millisecond), max Timestamp(Millisecond)[, null_probability Float64]` | `Timestamp(Millisecond)`  | Requires matching timestamp timezones and `min <= max`.                                   |
+
+The `UInt64` generators accept `UInt64` values and nonnegative signed integer inputs. Plain SQL calls can mix literals such as `0` with values larger than `Int64::MAX`; DataFusion parses `18446744073709551615` as `UInt64`.
+
+For integer normal generators, `min..=max` is a truncation bound, not an input used to calculate `stddev`. The sampler draws from an f64 normal centered on `mean`, rounds to the nearest integer, and retries values outside `min..=max`. A single-value range returns that value. Very low-probability tail ranges can error after a bounded number of retries; widen the range or move `mean` closer to the requested output range in that case.
+
+Choose `randgen_int64_uniform` or `randgen_uint64_uniform` when every integer in a large range must be directly representable. Integer normal sampling is f64-backed and inherits f64 spacing limits for very large magnitudes.
+
+Column-choice sampling requires at least one column-choice feature: `column-choice-parquet` or `column-choice-arrow-ipc`. The aggregate accepts `UInt32` and `UInt64` columns, ignores null source values, collapses duplicates, and serializes the distinct set as a roaring bitmap. The `UInt32` representation is interoperable with `datafusion-roaring 0.1`; the `UInt64` representation remains this crate's `LargeBinary` roaring-treemap format. `randgen_column_choice` samples that serialized value with replacement. An empty roaring set is valid aggregate output, but sampling from it returns a DataFusion error because there is no value to choose.
+
+`randgen_nullable` wraps any generator or expression and randomly replaces rows with null. The probability must be finite and inside `0.0..=1.0`; a probability of `0.0` preserves the input values, and `1.0` returns all nulls. Prefer a generator's native `null_probability` argument when the value comes directly from a randgen UDF. Use `randgen_nullable` when nullability must wrap another expression; it rebuilds null rows instead of only overlaying a validity bitmap.
+
+## Examples
+
+```sql
+SELECT randgen_int64_uniform(1, 10)
+FROM generate_series(1, 100);
+
+SELECT randgen_uint64_uniform(0, 18446744073709551615)
+FROM generate_series(1, 100);
+
+SELECT randgen_int64_normal(0, 200, 100, 15.0)
+FROM generate_series(1, 100);
+
+SELECT randgen_utf8('ABC123', 8, 16)
+FROM generate_series(1, 100);
+
+SELECT randgen_int64_uniform(1, 10, 0.25)
+FROM generate_series(1, 100);
+
+SELECT randgen_choice(['UTC', 'America/New_York', 'Europe/London'])
+FROM generate_series(1, 100);
+
+SELECT randgen_nullable(randgen_int64_uniform(1, 10), 0.25)
+FROM generate_series(1, 100);
+
+WITH choices AS (
+  SELECT randgen_roaring_agg(user_id) AS user_ids
+  FROM users
+)
+SELECT randgen_column_choice(user_ids)
+FROM choices, generate_series(1, 100);
+```
+
+For row-wise generators, column arguments work the same way as constants:
+
+```sql
+SELECT randgen_int64_uniform(min_value, max_value)
+FROM bounds;
+
+SELECT randgen_utf8(alphabet, min_len, max_len)
+FROM string_specs;
+```
+
+## Development
+
+Run the local gate with:
+
+```bash
+just check
+```
+
+The task runs:
+
+- `cargo fmt --check`
+- `cargo check --all-targets`
+- `cargo check --all-targets --all-features`
+- `cargo clippy --all-targets --all-features -- -D warnings`
+- `cargo nextest run --all-targets`
+- `cargo nextest run --all-targets --all-features`
+
+Test the optional column-choice features with:
+
+```bash
+cargo test --features column-choice-parquet --test column_choice_parquet
+cargo test --features column-choice-arrow-ipc --test column_choice_arrow_ipc
+cargo test --all-features --test column_choice_parquet --test column_choice_arrow_ipc
+cargo test --all-features --test column_choice_roaring_agg
+```
+
+The integration suite includes property tests for every public UDF plus direct Rust API and SQL stress tests over larger batches:
+
+```bash
+just stress
+just stress-sql
+just stress-column-choice
+just stress-all
+```
+
+Run the longer repeated soak passes explicitly:
+
+```bash
+just soak
+just soak-sql
+just soak-all
+RANDGEN_SOAK_ITERATIONS=100 RANDGEN_SOAK_ROWS=16384 just soak
+RANDGEN_SQL_SOAK_ITERATIONS=100 RANDGEN_SQL_SOAK_ROWS=8192 just soak-sql
+```
+
+Release checks:
+
+```bash
+just release-check
+cargo publish --dry-run --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+cargo deny check
+just coverage
+```
+
+Run `cargo package --list --locked` to check package contents. The published crate excludes benchmarks, integration tests, and fuzz targets.
+
+Fuzzing uses `cargo-fuzz` with separate targets for the direct Rust API and the SQL API:
+
+```bash
+cargo install cargo-fuzz
+rustup toolchain install nightly
+just fuzz-smoke
+cargo +nightly fuzz run direct_api
+cargo +nightly fuzz run sql_api
+```
+
+`deny.toml` treats duplicate dependency versions as warnings unless they point to a security or size problem. It contains no advisory ignores.
+
+## License
+
+Licensed under MIT or Apache-2.0, at your option.
