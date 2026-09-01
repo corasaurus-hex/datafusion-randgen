@@ -2,20 +2,21 @@
 name = "datafusion-randgen"
 version = "0.1.0"
 edition = "2024"
-description = "Random data generator UDFs for Apache DataFusion"
-license = "MIT OR Apache-2.0"
-keywords = ["datafusion", "random", "data", "generator"]
-repository = "https://github.com/corasaurus-hex/datafusion-randgen"
-readme = "README.md"
 exclude = [
-    ".github/**",
-    "benches/**",
-    "deny.toml",
-    "fuzz/**",
-    "justfile",
-    "tests/**",
+  ".github/**",
+  "benches/**",
+  "deny.toml",
+  "dprint.json",
+  "fuzz/**",
+  "justfile",
+  "tests/**",
 ]
+keywords = ["datafusion", "random", "data", "generator"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/corasaurus-hex/datafusion-randgen"
 rust-version = "1.89.0"
+description = "Random data generator UDFs for Apache DataFusion"
 
 [features]
 default = []
