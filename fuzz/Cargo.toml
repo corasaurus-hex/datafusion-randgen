@@ -9,8 +9,8 @@ cargo-fuzz = true
 
 [dependencies]
 arbitrary = { version = "1.4.2", features = ["derive"] }
-arrow-array = { version = "59.2.0", default-features = false }
-arrow-schema = { version = "59.2.0", default-features = false }
+arrow-array = { version = "59.3.0", default-features = false }
+arrow-schema = { version = "59.3.0", default-features = false }
 datafusion = { version = "55.0.0", default-features = false, features = ["sql", "nested_expressions"] }
 datafusion-common = { version = "55.0.0", default-features = false }
 datafusion-expr = { version = "55.0.0", default-features = false }
