@@ -24,20 +24,20 @@ column-choice-arrow-ipc = ["dep:arrow-ipc", "dep:datafusion-roaring", "dep:roari
 column-choice-parquet = ["dep:datafusion-roaring", "dep:parquet", "dep:roaring"]
 
 [dependencies]
-arrow-array = { version = "59.2.0", default-features = false }
-arrow-ipc = { version = "59.2.0", optional = true, default-features = false }
-arrow-schema = { version = "59.2.0", default-features = false }
+arrow-array = { version = "59.3.0", default-features = false }
+arrow-ipc = { version = "59.3.0", optional = true, default-features = false }
+arrow-schema = { version = "59.3.0", default-features = false }
 datafusion-common = { version = "55.0.0", default-features = false }
 datafusion-expr = { version = "55.0.0", default-features = false }
 datafusion-roaring = { version = "0.1.0", optional = true }
-parquet = { version = "59.2.0", optional = true, default-features = false, features = ["arrow", "snap"] }
+parquet = { version = "59.3.0", optional = true, default-features = false, features = ["arrow", "snap"] }
 rand = "0.10.2"
 rand_distr = "0.6.0"
 roaring = { version = "0.11.5", optional = true }
 
 [dev-dependencies]
-arrow-buffer = { version = "59.2.0", default-features = false }
-arrow-ipc = { version = "59.2.0", default-features = false }
+arrow-buffer = { version = "59.3.0", default-features = false }
+arrow-ipc = { version = "59.3.0", default-features = false }
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 datafusion = { version = "55.0.0", default-features = false, features = ["sql", "nested_expressions"] }
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
