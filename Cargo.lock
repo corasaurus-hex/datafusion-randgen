@@ -1196,9 +1196,9 @@ dependencies = [
 
 [[package]]
 name = "datafusion-roaring"
-version = "0.1.0"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "928f3b60da31a524e96914f7b3380f909902082c8174ebeddfd61e75c847fc7d"
+checksum = "26ea6c1111788dcb84e2dbeee1861b6a8b376dd1dcf5f150eb67aee1a952c081"
 dependencies = [
  "arrow-array",
  "arrow-schema",
